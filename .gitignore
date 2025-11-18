@@ -1,0 +1,6 @@
+# Trong folder backend, tạo file .gitignore
+node_modules/
+.env
+*.log
+.DS_Store
+npm-debug.log*

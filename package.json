@@ -1,0 +1,35 @@
+{
+  "name": "suaxe-backend",
+  "version": "1.0.0",
+  "main": "api-server.js",
+  "scripts": {
+    "start": "node api-server.js",
+    "dev": "nodemon api-server.js",
+    "test": "echo \"No tests yet\" && exit 0"
+  },
+  "keywords": ["api", "car-repair", "booking"],
+  "author": "Vo Minh Quan",
+  "license": "ISC",
+  "description": "Backend API for SuaXe App",
+  "dependencies": {
+    "@google-cloud/storage": "^7.17.2",
+    "bcrypt": "^5.1.1",
+    "body-parser": "^1.20.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-session": "^1.18.1",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.12.1",
+    "multer": "^1.4.5-lts.1",
+    "mysql2": "^3.14.0",
+    "passport": "^0.7.0",
+    "passport-auth0": "^1.4.4",
+    "sharp": "^0.32.5"
+  },
+  "engines": {
+    "node": ">=18.x",
+    "npm": ">=9.x"
+  }
+}
+
