@@ -162,8 +162,14 @@ try { const revenueRoutes = require('./routes/revenueRoutes'); app.use('/api/rev
 try { const mechanicsRoutes = require('./routes/mechanicsRoutes'); app.use('/api/mechanics', mechanicsRoutes); } catch (e) {}
 try { const imageRoutes = require('./routes/imageRoutes'); app.use('/api/images', imageRoutes); } catch (e) {}
 try { const profileRoutes = require('./routes/profileRoutes'); app.use('/api/users', profileRoutes); } catch (e) {}
-try { const uploadRoutes = require('./routes/uploadRoutes'); app.use('/api/upload', uploadRoutes); } catch (e) { console.log('⚠️  uploadRoutes not loaded'); }
-
+try { 
+  const uploadRoutes = require('./routes/uploadRoutes'); 
+  app.use('/api/upload', uploadRoutes); 
+  console.log('✅ uploadRoutes loaded successfully');
+} catch (e) { 
+  console.error('❌ uploadRoutes ERROR:', e.message); 
+  console.error('Stack:', e.stack);
+}
 // ---------------- Core endpoints (copied/merged) ----------------
 
 // API test
