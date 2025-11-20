@@ -5,7 +5,6 @@ const multer = require('multer');
 const cloudinary = require('../config/cloudinary');
 const { authenticateToken } = require('./authRoutes');
 const { pool } = require('../db');
-const cloudinary = require('../config/cloudinary');
 
 // Multer - lưu vào memory
 const upload = multer({
