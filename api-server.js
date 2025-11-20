@@ -17,10 +17,23 @@ const multer = require('multer');
 
 const app = express();
 
-// --- Config GCS ---
+// --- Config GCS (Optional - không bắt buộc) ---
 const GCS_BUCKET = process.env.GCS_BUCKET || 'suaxe-api-2-web';
-const storage = new Storage(); // App Engine / Cloud Run sẽ dùng default credentials
-const bucket = storage.bucket(GCS_BUCKET);
+let storage, bucket;
+
+// Chỉ init GCS nếu có config (để tương thích backward)
+try {
+  if (process.env.GOOGLE_APPLICATION_CREDENTIALS || process.env.GCS_BUCKET) {
+    const { Storage } = require('@google-cloud/storage');
+    storage = new Storage();
+    bucket = storage.bucket(GCS_BUCKET);
+    console.log('✅ Google Cloud Storage initialized:', GCS_BUCKET);
+  } else {
+    console.log('ℹ️  GCS not configured (optional)');
+  }
+} catch (err) {
+  console.log('ℹ️  GCS init skipped:', err.message);
+}
 
 // --- Multer (memory) để upload file lên GCS ---
 const upload = multer({
@@ -30,7 +43,10 @@ const upload = multer({
 
 // --- Logging env ---
 console.log('NODE_ENV =', process.env.NODE_ENV);
-console.log('Using GCS bucket =', GCS_BUCKET);
+console.log('Database =', process.env.MYSQLDATABASE || process.env.DB_NAME || 'websuaxe');
+if (process.env.GCS_BUCKET) {
+  console.log('Using GCS bucket =', GCS_BUCKET);
+}
 
 // --- Middleware logging request/response ---
 app.use((req, res, next) => {
@@ -95,13 +111,13 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// --- MySQL Pool (port 3306 theo config bạn xác nhận) ---
+// --- MySQL Pool - ĐÃ SỬA: Hỗ trợ Railway (MYSQL*) và fallback (DB_*) ---
 const pool = mysql.createPool({
-  host: process.env.DB_HOST || '34.124.218.251',
-  user: process.env.DB_USER || 'websuaxe',
-  password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'websuaxe',
-  port: parseInt(process.env.DB_PORT || '3306'),
+  host: process.env.MYSQLHOST || process.env.DB_HOST || 'localhost',
+  user: process.env.MYSQLUSER || process.env.DB_USER || 'root',
+  password: process.env.MYSQLPASSWORD || process.env.DB_PASSWORD || '',
+  database: process.env.MYSQLDATABASE || process.env.DB_NAME || 'websuaxe',
+  port: parseInt(process.env.MYSQLPORT || process.env.DB_PORT || '3306'),
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0
@@ -146,6 +162,7 @@ try { const revenueRoutes = require('./routes/revenueRoutes'); app.use('/api/rev
 try { const mechanicsRoutes = require('./routes/mechanicsRoutes'); app.use('/api/mechanics', mechanicsRoutes); } catch (e) {}
 try { const imageRoutes = require('./routes/imageRoutes'); app.use('/api/images', imageRoutes); } catch (e) {}
 try { const profileRoutes = require('./routes/profileRoutes'); app.use('/api/users', profileRoutes); } catch (e) {}
+try { const uploadRoutes = require('./routes/uploadRoutes'); app.use('/api/upload', uploadRoutes); } catch (e) { console.log('⚠️  uploadRoutes not loaded'); }
 
 // ---------------- Core endpoints (copied/merged) ----------------
 
