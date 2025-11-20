@@ -1,5 +1,6 @@
 // Phiên bản gộp và hỗ trợ upload ảnh lên Google Cloud Storage.
 // Tối ưu cho deploy trên App Engine / Cloud Run trong cùng project (suaxe-api).
+// ✅ ĐÃ THÊM: Vehicle API inline để lưu xe
 
 const express = require('express');
 require('dotenv').config();
@@ -162,6 +163,7 @@ try { const revenueRoutes = require('./routes/revenueRoutes'); app.use('/api/rev
 try { const mechanicsRoutes = require('./routes/mechanicsRoutes'); app.use('/api/mechanics', mechanicsRoutes); } catch (e) {}
 try { const imageRoutes = require('./routes/imageRoutes'); app.use('/api/images', imageRoutes); } catch (e) {}
 try { const profileRoutes = require('./routes/profileRoutes'); app.use('/api/users', profileRoutes); } catch (e) {}
+
 try { 
   const uploadRoutes = require('./routes/uploadRoutes'); 
   app.use('/api/upload', uploadRoutes); 
@@ -170,6 +172,272 @@ try {
   console.error('❌ uploadRoutes ERROR:', e.message); 
   console.error('Stack:', e.stack);
 }
+
+// ================= ✅ VEHICLE API - INLINE (không cần file riêng) =================
+console.log('🚗 Loading inline Vehicle API...');
+
+// GET /api/vehicles/user/:userId - Lấy tất cả xe của user
+app.get('/api/vehicles/user/:userId', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.params.userId;
+    
+    // Kiểm tra quyền
+    if (req.user.userId != userId && req.user.role !== 1) {
+      return res.status(403).json({
+        success: false,
+        message: 'Không có quyền truy cập'
+      });
+    }
+    
+    const [vehicles] = await pool.query(
+      'SELECT * FROM Vehicles WHERE UserID = ? ORDER BY CreatedAt DESC',
+      [userId]
+    );
+    
+    res.json({
+      success: true,
+      data: vehicles,
+      vehicles: vehicles
+    });
+  } catch (error) {
+    console.error('Error fetching user vehicles:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// GET /api/vehicles/:id - Lấy thông tin xe theo ID
+app.get('/api/vehicles/:id', authenticateToken, async (req, res) => {
+  try {
+    const vehicleId = req.params.id;
+    
+    const [vehicles] = await pool.query(
+      'SELECT * FROM Vehicles WHERE VehicleID = ?',
+      [vehicleId]
+    );
+    
+    if (vehicles.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Không tìm thấy xe'
+      });
+    }
+    
+    const vehicle = vehicles[0];
+    
+    // Kiểm tra quyền
+    if (req.user.userId != vehicle.UserID && req.user.role !== 1) {
+      return res.status(403).json({
+        success: false,
+        message: 'Không có quyền truy cập'
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: vehicle,
+      vehicle: vehicle
+    });
+  } catch (error) {
+    console.error('Error fetching vehicle:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// POST /api/vehicles - Tạo xe mới
+app.post('/api/vehicles', authenticateToken, async (req, res) => {
+  try {
+    const { userId, licensePlate, brand, model, year } = req.body;
+    
+    console.log('📥 Create vehicle request:', { userId, licensePlate, brand, model, year });
+    
+    // Validate
+    if (!userId || !licensePlate) {
+      return res.status(400).json({
+        success: false,
+        message: 'Thiếu thông tin bắt buộc (userId, licensePlate)'
+      });
+    }
+    
+    // Kiểm tra quyền
+    if (req.user.userId != userId && req.user.role !== 1) {
+      return res.status(403).json({
+        success: false,
+        message: 'Không có quyền tạo xe cho user khác'
+      });
+    }
+    
+    // Kiểm tra biển số đã tồn tại chưa
+    const [existing] = await pool.query(
+      'SELECT * FROM Vehicles WHERE UserID = ? AND LicensePlate = ?',
+      [userId, licensePlate]
+    );
+    
+    if (existing.length > 0) {
+      console.log('✅ Vehicle already exists:', existing[0]);
+      return res.json({
+        success: true,
+        message: 'Xe đã tồn tại',
+        data: existing[0],
+        id: existing[0].VehicleID
+      });
+    }
+    
+    // Tạo xe mới
+    const [result] = await pool.query(
+      'INSERT INTO Vehicles (UserID, LicensePlate, Brand, Model, Year, CreatedAt) VALUES (?, ?, ?, ?, ?, NOW())',
+      [userId, licensePlate, brand || null, model || null, year || null]
+    );
+    
+    console.log('✅ Vehicle created with ID:', result.insertId);
+    
+    // Lấy thông tin xe vừa tạo
+    const [newVehicle] = await pool.query(
+      'SELECT * FROM Vehicles WHERE VehicleID = ?',
+      [result.insertId]
+    );
+    
+    res.status(201).json({
+      success: true,
+      message: 'Tạo xe mới thành công',
+      data: newVehicle[0],
+      id: result.insertId
+    });
+  } catch (error) {
+    console.error('❌ Error creating vehicle:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// PUT /api/vehicles/:id - Cập nhật thông tin xe
+app.put('/api/vehicles/:id', authenticateToken, async (req, res) => {
+  try {
+    const vehicleId = req.params.id;
+    const { licensePlate, brand, model, year } = req.body;
+    
+    // Kiểm tra xe tồn tại
+    const [existing] = await pool.query(
+      'SELECT * FROM Vehicles WHERE VehicleID = ?',
+      [vehicleId]
+    );
+    
+    if (existing.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Không tìm thấy xe'
+      });
+    }
+    
+    const vehicle = existing[0];
+    
+    // Kiểm tra quyền
+    if (req.user.userId != vehicle.UserID && req.user.role !== 1) {
+      return res.status(403).json({
+        success: false,
+        message: 'Không có quyền cập nhật xe này'
+      });
+    }
+    
+    // Cập nhật
+    await pool.query(
+      'UPDATE Vehicles SET LicensePlate = ?, Brand = ?, Model = ?, Year = ? WHERE VehicleID = ?',
+      [
+        licensePlate || vehicle.LicensePlate,
+        brand || vehicle.Brand,
+        model || vehicle.Model,
+        year || vehicle.Year,
+        vehicleId
+      ]
+    );
+    
+    // Lấy thông tin xe sau khi cập nhật
+    const [updated] = await pool.query(
+      'SELECT * FROM Vehicles WHERE VehicleID = ?',
+      [vehicleId]
+    );
+    
+    res.json({
+      success: true,
+      message: 'Cập nhật xe thành công',
+      data: updated[0]
+    });
+  } catch (error) {
+    console.error('Error updating vehicle:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// DELETE /api/vehicles/:id - Xóa xe
+app.delete('/api/vehicles/:id', authenticateToken, async (req, res) => {
+  try {
+    const vehicleId = req.params.id;
+    
+    // Kiểm tra xe tồn tại
+    const [existing] = await pool.query(
+      'SELECT * FROM Vehicles WHERE VehicleID = ?',
+      [vehicleId]
+    );
+    
+    if (existing.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Không tìm thấy xe'
+      });
+    }
+    
+    const vehicle = existing[0];
+    
+    // Kiểm tra quyền
+    if (req.user.userId != vehicle.UserID && req.user.role !== 1) {
+      return res.status(403).json({
+        success: false,
+        message: 'Không có quyền xóa xe này'
+      });
+    }
+    
+    // Kiểm tra xe có đang được dùng trong appointment không
+    const [appointments] = await pool.query(
+      'SELECT COUNT(*) as count FROM Appointments WHERE VehicleID = ?',
+      [vehicleId]
+    );
+    
+    if (appointments[0].count > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Không thể xóa xe đang có lịch hẹn'
+      });
+    }
+    
+    // Xóa xe
+    await pool.query('DELETE FROM Vehicles WHERE VehicleID = ?', [vehicleId]);
+    
+    res.json({
+      success: true,
+      message: 'Xóa xe thành công'
+    });
+  } catch (error) {
+    console.error('Error deleting vehicle:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+console.log('✅ Vehicle API loaded successfully (inline)');
+// ================= END VEHICLE API =================
+
 // ---------------- Core endpoints (copied/merged) ----------------
 
 // API test
@@ -191,38 +459,42 @@ app.get('/api/db-test', async (req, res) => {
 // ================= Image upload -> Google Cloud Storage =================
 // POST /api/images/upload
 // form-data: image (file), folder (optional: avatars|services|service-carousel)
-app.post('/api/images/upload', authenticateToken, checkAdminAccess, upload.single('image'), async (req, res) => {
+app.post('/api/images/upload', authenticateToken, upload.single('image'), async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ success: false, message: 'Thiếu file image' });
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'Không có file được upload' });
+    }
 
     const folder = req.body.folder || 'services';
     const allowedFolders = ['avatars', 'services', 'service-carousel'];
-    const useFolder = allowedFolders.includes(folder) ? folder : 'services';
+    if (!allowedFolders.includes(folder)) {
+      return res.status(400).json({ success: false, message: 'Folder không hợp lệ' });
+    }
 
-    // Tạo tên file an toàn
+    const originalName = req.file.originalname;
+    const fileExt = path.extname(originalName);
     const timestamp = Date.now();
-    const originalName = path.basename(req.file.originalname).replace(/\s+/g, '_');
-    const fileName = `${timestamp}_${originalName}`;
-    const destination = `images/${useFolder}/${fileName}`;
+    const randomStr = Math.random().toString(36).substring(2, 8);
+    const safeFilename = `${timestamp}-${randomStr}${fileExt}`;
 
+    const destination = `${folder}/${safeFilename}`;
     const file = bucket.file(destination);
 
-    // Upload buffer
     const stream = file.createWriteStream({
-      metadata: { contentType: req.file.mimetype },
-      resumable: false
+      metadata: {
+        contentType: req.file.mimetype
+      },
+      public: true
     });
 
     stream.on('error', (err) => {
-      console.error('Upload error:', err);
+      console.error('Stream error:', err);
       return res.status(500).json({ success: false, message: 'Lỗi upload: ' + err.message });
     });
 
     stream.on('finish', async () => {
       try {
-        // Make public
         await file.makePublic();
-
         const publicUrl = `https://storage.googleapis.com/${GCS_BUCKET}/${destination}`;
 
         // Nếu muốn lưu vào DB, bạn có thể insert vào bảng tương ứng ở đây (ví dụ Services, Users)
@@ -390,12 +662,13 @@ app.get('/api/booking/appointments', authenticateToken, async (req, res) => {
 app.get('/', (req, res) => {
   res.json({
     name: 'SuaXe API',
-    version: '1.0.0',
+    version: '1.0.1',
     frontend: 'https://suaxe-web-73744.web.app',
     endpoints: {
       auth: ['/api/auth/login', '/api/auth/register', '/api/auth/firebase'],
       services: ['/api/services'],
       booking: ['/api/booking/appointments'],
+      vehicles: ['/api/vehicles', '/api/vehicles/user/:userId'],
       images: ['/api/images/upload']
     }
   });
@@ -416,6 +689,7 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`API server running on port ${PORT}`);
+  console.log(`✅ Vehicle API enabled at /api/vehicles`);
 });
 
 module.exports = app;
