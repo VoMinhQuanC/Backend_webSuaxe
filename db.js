@@ -1,12 +1,13 @@
 const mysql = require('mysql2/promise');
 
-// Cấu hình kết nối database với biến môi trường
+// Cấu hình kết nối database - hỗ trợ cả MYSQL* và DB_* variables
 const config = {
-    host: process.env.DB_HOST || 'crossover.proxy.rlwy.net',
-    user: process.env.DB_USER || 'railway',
-    password: process.env.DB_PASSWORD || 'CfFPDEQNMLrHgKpApouPxQkYuaiyWNZe',
-    database: process.env.DB_NAME || 'railway',
-    port: parseInt(process.env.DB_PORT) || 35949,
+    // Railway dùng MYSQLHOST, local dùng DB_HOST
+    host: process.env.MYSQLHOST || process.env.DB_HOST || 'crossover.proxy.rlwy.net',
+    user: process.env.MYSQLUSER || process.env.DB_USER || 'railway',
+    password: process.env.MYSQLPASSWORD || process.env.DB_PASSWORD || 'CfFPDEQNMLrHgKpApouPxQkYuaiyWNZe',
+    database: process.env.MYSQLDATABASE || process.env.DB_NAME || 'railway',
+    port: parseInt(process.env.MYSQLPORT || process.env.DB_PORT || '35949'),
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0
@@ -22,13 +23,16 @@ async function connectDB() {
         console.log("✅ Kết nối MySQL thành công!");
         console.log(`   📍 Môi trường: ${process.env.NODE_ENV || 'development'}`);
         console.log(`   🌐 Host: ${config.host}:${config.port}`);
+        console.log(`   👤 User: ${config.user}`);
         console.log(`   💾 Database: ${config.database}`);
         connection.release();
         return pool;
     } catch (err) {
         console.error("❌ Lỗi kết nối MySQL:", err.message);
-        console.error("   📍 Đang thử kết nối tới:", config.host);
+        console.error("   📍 Host:", config.host);
         console.error("   🔌 Port:", config.port);
+        console.error("   👤 User:", config.user);
+        console.error("   💾 Database:", config.database);
         throw err;
     }
 }
