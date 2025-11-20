@@ -98,11 +98,12 @@ router.put('/profile', authenticateToken, async (req, res) => {
     }
 });
 
+
 /**
  * API: Upload avatar
  * Method: POST
  * Endpoint: /users/profile/upload-avatar
- */
+ 
 router.post('/profile/upload-avatar', authenticateToken, uploadAvatar.single('avatar'), async (req, res) => {
     try {
         if (!req.file) {
@@ -153,6 +154,8 @@ router.post('/profile/upload-avatar', authenticateToken, uploadAvatar.single('av
         });
     }
 });
+
+*/
 
 /**
  * API: Đổi mật khẩu người dùng
