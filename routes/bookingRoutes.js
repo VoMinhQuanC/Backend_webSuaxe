@@ -941,4 +941,201 @@ router.put('/appointments/:id', authenticateToken, async (req, res) => {
     }
 });
 
+// API: Block time slot (tạm thời khi user đang book)
+router.post('/blocked-time-slots', authenticateToken, async (req, res) => {
+    const connection = await pool.getConnection();
+    
+    try {
+        await connection.beginTransaction();
+        
+        const { mechanicId, slotTime, duration, isBlocked, isBreakTime } = req.body;
+        
+        if (!mechanicId || !slotTime) {
+            await connection.rollback();
+            return res.status(400).json({
+                success: false,
+                message: 'Thiếu thông tin mechanicId hoặc slotTime'
+            });
+        }
+        
+        // Double check: Slot này còn available không?
+        const [date, time] = slotTime.split(' ');
+        
+        const [checkExisting] = await connection.query(`
+            SELECT COUNT(*) as count 
+            FROM Appointments 
+            WHERE MechanicID = ? 
+            AND DATE(AppointmentDate) = ?
+            AND TIME(AppointmentDate) = ?
+            AND Status NOT IN ('Canceled')
+        `, [mechanicId, date, time]);
+        
+        if (checkExisting[0].count > 0) {
+            await connection.rollback();
+            return res.json({
+                success: false,
+                message: 'Slot này đã được đặt bởi người khác'
+            });
+        }
+        
+        // Check blocked slots
+        const [checkBlocked] = await connection.query(`
+            SELECT COUNT(*) as count
+            FROM BlockedTimeSlots
+            WHERE MechanicID = ?
+            AND DATE(SlotTime) = ?
+            AND TIME(SlotTime) = ?
+            AND IsBlocked = 1
+        `, [mechanicId, date, time]);
+        
+        if (checkBlocked[0].count > 0) {
+            await connection.rollback();
+            return res.json({
+                success: false,
+                message: 'Slot này đã được block'
+            });
+        }
+        
+        // Insert blocked slot (main slot)
+        const [result] = await connection.query(`
+            INSERT INTO BlockedTimeSlots 
+            (MechanicID, SlotTime, IsBlocked, IsBreakTime)
+            VALUES (?, ?, ?, ?)
+        `, [
+            mechanicId,
+            slotTime,
+            isBlocked || 1,
+            isBreakTime || 1
+        ]);
+        
+        const blockedId = result.insertId;
+        
+        // Nếu có duration, tạo thêm blocked slots cho các giờ sau + 10 phút nghỉ
+        if (duration) {
+            const slotDate = new Date(slotTime);
+            const totalMinutes = parseInt(duration);
+            
+            // Block các slots trong khoảng thời gian làm dịch vụ
+            let currentTime = new Date(slotDate);
+            currentTime.setMinutes(currentTime.getMinutes() + 60); // Bắt đầu từ slot tiếp theo
+            
+            while (currentTime < new Date(slotDate.getTime() + totalMinutes * 60000)) {
+                const blockTimeStr = currentTime.toISOString().slice(0, 19).replace('T', ' ');
+                
+                await connection.query(`
+                    INSERT INTO BlockedTimeSlots 
+                    (MechanicID, SlotTime, RelatedAppointmentID, IsBlocked, IsBreakTime)
+                    VALUES (?, ?, ?, ?, ?)
+                `, [
+                    mechanicId,
+                    blockTimeStr,
+                    null, // RelatedAppointmentID sẽ được update sau khi tạo appointment
+                    1,
+                    1
+                ]);
+                
+                currentTime.setMinutes(currentTime.getMinutes() + 60);
+            }
+            
+            // Thêm 10 phút nghỉ
+            const breakTime = new Date(slotDate.getTime() + totalMinutes * 60000);
+            const breakTimeStr = breakTime.toISOString().slice(0, 19).replace('T', ' ');
+            
+            await connection.query(`
+                INSERT INTO BlockedTimeSlots 
+                (MechanicID, SlotTime, RelatedAppointmentID, IsBlocked, IsBreakTime)
+                VALUES (?, ?, ?, ?, ?)
+            `, [
+                mechanicId,
+                breakTimeStr,
+                null,
+                1,
+                1  // IsBreakTime = true
+            ]);
+        }
+        
+        await connection.commit();
+        
+        res.json({
+            success: true,
+            blockedId: blockedId,
+            message: 'Đã block slot thành công',
+            expiresIn: 600 // 10 minutes
+        });
+        
+    } catch (err) {
+        await connection.rollback();
+        console.error('Error blocking slot:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server: ' + err.message
+        });
+    } finally {
+        connection.release();
+    }
+});
+
+// API: Unblock time slot (khi user back hoặc hết thời gian)
+router.delete('/blocked-time-slots/:id', authenticateToken, async (req, res) => {
+    const connection = await pool.getConnection();
+    
+    try {
+        const { id } = req.params;
+        
+        // Lấy thông tin blocked slot
+        const [blockedSlot] = await connection.query(`
+            SELECT * FROM BlockedTimeSlots WHERE BlockedID = ?
+        `, [id]);
+        
+        if (blockedSlot.length === 0) {
+            return res.json({
+                success: false,
+                message: 'Không tìm thấy blocked slot'
+            });
+        }
+        
+        const mechanicId = blockedSlot[0].MechanicID;
+        const slotTime = blockedSlot[0].SlotTime;
+        const date = new Date(slotTime).toISOString().split('T')[0];
+        
+        // Xóa tất cả blocked slots của mechanic này trong ngày
+        // (bao gồm cả break time)
+        await connection.query(`
+            DELETE FROM BlockedTimeSlots 
+            WHERE MechanicID = ?
+            AND DATE(SlotTime) = ?
+            AND IsBreakTime = 1
+            AND RelatedAppointmentID IS NULL
+        `, [mechanicId, date]);
+        
+        res.json({
+            success: true,
+            message: 'Đã unblock slot'
+        });
+        
+    } catch (err) {
+        console.error('Error unblocking slot:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server: ' + err.message
+        });
+    } finally {
+        connection.release();
+    }
+});
+
+// Cron job: Tự động xóa blocked slots hết hạn (> 10 phút)
+setInterval(async () => {
+    try {
+        await pool.query(`
+            DELETE FROM BlockedTimeSlots 
+            WHERE IsBreakTime = 1 
+            AND RelatedAppointmentID IS NULL 
+            AND SlotTime < DATE_SUB(NOW(), INTERVAL 10 MINUTE)
+        `);
+    } catch (err) {
+        console.error('Error cleaning expired blocks:', err);
+    }
+}, 60000); // Chạy mỗi phút
+
 module.exports = router;
