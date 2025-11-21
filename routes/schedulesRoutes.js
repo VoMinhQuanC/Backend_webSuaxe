@@ -18,7 +18,7 @@ router.get('/available-slots', async (req, res) => {
     if (!date) return res.status(400).json({ success: false, message: 'Thiếu ngày cần kiểm tra' });
 
     const [rows] = await pool.query(
-      `SELECT s.StaffScheduleID, s.MechanicID, m.FullName AS MechanicName, s.WorkDate, s.StartTime, s.EndTime
+      `SELECT s.ScheduleID, s.MechanicID, u.FullName AS MechanicName, s.WorkDate, s.StartTime, s.EndTime
        FROM StaffSchedule s
        JOIN Users u ON s.MechanicID = u.UserID
        WHERE s.WorkDate = ? 
