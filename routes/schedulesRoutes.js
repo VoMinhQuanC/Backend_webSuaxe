@@ -20,7 +20,7 @@ router.get('/available-slots', async (req, res) => {
     const [rows] = await pool.query(
       `SELECT s.StaffScheduleID, s.MechanicID, m.FullName AS MechanicName, s.WorkDate, s.StartTime, s.EndTime
        FROM StaffSchedule s
-       JOIN Mechanics m ON s.MechanicID = m.MechanicID
+       JOIN Users u ON s.MechanicID = u.UserID
        WHERE s.WorkDate = ? 
        ORDER BY s.StartTime`,
       [date]
