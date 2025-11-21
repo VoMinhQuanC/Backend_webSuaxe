@@ -933,4 +933,111 @@ router.put('/appointments/:id', authenticateToken, async (req, res) => {
     }
 });
 
+// API: Tạo lịch hẹn mới (USER)
+router.post('/create', authenticateToken, async (req, res) => {
+    try {
+        const { userId, vehicleId, appointmentDate, notes, serviceIds } = req.body;
+        
+        // Validate dữ liệu
+        if (!userId || !vehicleId || !appointmentDate || !serviceIds || serviceIds.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Thiếu thông tin bắt buộc'
+            });
+        }
+        
+        // Kiểm tra user có quyền tạo lịch cho chính mình không
+        if (req.user.userId !== userId && req.user.role !== 1) {
+            return res.status(403).json({
+                success: false,
+                message: 'Không có quyền tạo lịch cho user khác'
+            });
+        }
+        
+        console.log('Creating appointment:', { userId, vehicleId, appointmentDate, serviceIds });
+        
+        // Tạo appointment
+        const connection = await pool.getConnection();
+        
+        try {
+            await connection.beginTransaction();
+            
+            // 1. Tạo Appointment
+            const [appointmentResult] = await connection.query(
+                `INSERT INTO Appointments (UserID, VehicleID, AppointmentDate, Status, Notes) 
+                 VALUES (?, ?, ?, 'Pending', ?)`,
+                [userId, vehicleId, appointmentDate, notes || null]
+            );
+            
+            const appointmentId = appointmentResult.insertId;
+            
+            // 2. Lấy thông tin dịch vụ và tính tổng thời gian
+            const [services] = await connection.query(
+                `SELECT ServiceID, EstimatedTime FROM Services WHERE ServiceID IN (?)`,
+                [serviceIds]
+            );
+            
+            let totalTime = 0;
+            for (const service of services) {
+                totalTime += service.EstimatedTime || 0;
+            }
+            
+            // 3. Thêm các dịch vụ vào AppointmentServices
+            for (const serviceId of serviceIds) {
+                await connection.query(
+                    `INSERT INTO AppointmentServices (AppointmentID, ServiceID, Quantity) 
+                     VALUES (?, ?, 1)`,
+                    [appointmentId, serviceId]
+                );
+            }
+            
+            // 4. Cập nhật ServiceDuration và EstimatedEndTime
+            const estimatedEndTime = new Date(new Date(appointmentDate).getTime() + totalTime * 60000);
+            
+            await connection.query(
+                `UPDATE Appointments 
+                 SET ServiceDuration = ?, EstimatedEndTime = ? 
+                 WHERE AppointmentID = ?`,
+                [totalTime, estimatedEndTime, appointmentId]
+            );
+            
+            await connection.commit();
+            
+            // 5. Lấy thông tin appointment vừa tạo
+            const [appointment] = await connection.query(
+                `SELECT 
+                    a.*,
+                    u.FullName, u.Email, u.PhoneNumber,
+                    v.LicensePlate, v.Brand, v.Model, v.Year
+                 FROM Appointments a
+                 LEFT JOIN Users u ON a.UserID = u.UserID
+                 LEFT JOIN Vehicles v ON a.VehicleID = v.VehicleID
+                 WHERE a.AppointmentID = ?`,
+                [appointmentId]
+            );
+            
+            console.log('✅ Appointment created:', appointmentId);
+            
+            res.status(201).json({
+                success: true,
+                message: 'Tạo lịch hẹn thành công',
+                appointment: appointment[0]
+            });
+            
+        } catch (err) {
+            await connection.rollback();
+            throw err;
+        } finally {
+            connection.release();
+        }
+        
+    } catch (err) {
+        console.error('Lỗi khi tạo lịch hẹn:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server: ' + err.message
+        });
+    }
+});
+
 module.exports = router;
