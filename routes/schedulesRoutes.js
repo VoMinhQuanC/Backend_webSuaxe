@@ -4,8 +4,8 @@ const express = require('express');
 const router = express.Router();
 const mysql = require('mysql2/promise');
 const { authenticateToken } = require('./authRoutes');
-// const pool = require('../db').pool;
-const pool = require('../db');
+
+const { pool } = require('../db');
 
 // Middleware xác thực cho tất cả các routes
 router.use(authenticateToken);
