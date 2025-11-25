@@ -69,7 +69,7 @@ const uploadAvatar = multer({
 router.put('/profile', authenticateToken, async (req, res) => {
     try {
         const userId = req.user.userId;
-        const { fullName, phoneNumber, address } = req.body;
+        const { fullName, phoneNumber } = req.body; // ← Bỏ address
         
         // Kiểm tra dữ liệu đầu vào
         if (!fullName || !phoneNumber) {
@@ -79,10 +79,10 @@ router.put('/profile', authenticateToken, async (req, res) => {
             });
         }
         
-        // Cập nhật thông tin người dùng
+        // Cập nhật thông tin người dùng (chỉ FullName và PhoneNumber)
         await pool.query(
-            'UPDATE Users SET FullName = ?, PhoneNumber = ?, Address = ? WHERE UserID = ?',
-            [fullName, phoneNumber, address || null, userId]
+            'UPDATE Users SET FullName = ?, PhoneNumber = ? WHERE UserID = ?',
+            [fullName, phoneNumber, userId] // ← Bỏ address
         );
         
         res.json({
