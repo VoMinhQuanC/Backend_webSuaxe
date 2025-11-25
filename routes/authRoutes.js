@@ -172,8 +172,15 @@ router.post('/login', async (req, res) => {
         res.json({
             success: true,
             message: 'Đăng nhập thành công',
-            token,
-            user: userResponse
+            token: token,
+            user: {
+                id: user.UserID,
+                fullName: user.FullName,
+                email: user.Email,
+                phoneNumber: user.PhoneNumber,
+                role: user.RoleID,
+                avatarUrl: user.AvatarUrl || user.ProfilePicture // ← THÊM
+            }
         });
     } catch (error) {
         console.error('Lỗi khi đăng nhập:', error);
