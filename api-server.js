@@ -161,7 +161,14 @@ try { const scheduleRoutes = require('./routes/schedulesRoutes'); app.use('/api/
 try { const profileRoutes = require('./routes/profileRoutes'); app.use('/api/users', profileRoutes); } catch (e) {}
 try { const userRoutes = require('./routes/userRoutes'); app.use('/api/users', userRoutes); } catch (e) {}
 try { const revenueRoutes = require('./routes/revenueRoutes'); app.use('/api/revenue', revenueRoutes); } catch (e) {}
-try { const mechanicsRoutes = require('./routes/mechanicsRoutes'); app.use('/api/mechanics', mechanicsRoutes); } catch (e) {}
+try { 
+    const mechanicsRoutes = require('./routes/mechanicsRoutes'); 
+    app.use('/api/mechanics', mechanicsRoutes); 
+    console.log('✅ mechanicsRoutes loaded successfully');
+} catch (e) {
+    console.error('❌ mechanicsRoutes ERROR:', e.message);
+    console.error('Stack:', e.stack);
+}
 try { const imageRoutes = require('./routes/imageRoutes'); app.use('/api/images', imageRoutes); } catch (e) {}
 
 try { 
