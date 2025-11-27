@@ -388,82 +388,131 @@ router.post('/schedules', authenticateToken, checkMechanicAccess, async (req, re
  */
 router.put('/schedules/:id', authenticateToken, checkMechanicAccess, async (req, res) => {
     const connection = await pool.getConnection();
+    
     try {
         await connection.beginTransaction();
         
         const scheduleId = req.params.id;
-        const { startTime, endTime, type, notes } = req.body;
+        const { WorkDate, StartTime, EndTime, Type, Notes, IsAvailable, startTime, endTime } = req.body;
         const mechanicId = req.user.userId;
         
-        // Kiểm tra lịch làm việc có tồn tại không
+        // Kiểm tra lịch có thuộc về mechanic này không
         const [scheduleCheck] = await connection.query(
             'SELECT * FROM StaffSchedule WHERE ScheduleID = ? AND MechanicID = ?',
             [scheduleId, mechanicId]
         );
         
         if (scheduleCheck.length === 0) {
-            return res.status(404).json({
-                success: false,
-                message: 'Không tìm thấy lịch làm việc của bạn'
-            });
+            await connection.rollback();
+            return res.status(404).json({ success: false, message: 'Không tìm thấy lịch làm việc' });
         }
         
-        // Parse datetime
-        const startDate = new Date(startTime);
-        const endDate = new Date(endTime);
+        // Chuẩn bị dữ liệu update
+        let updateData = {
+            WorkDate: WorkDate,
+            Type: Type || 'available',
+            Notes: Notes || null,
+            IsAvailable: IsAvailable !== undefined ? IsAvailable : 1
+        };
         
-        const workDate = startDate.toISOString().split('T')[0];
-        const startTimeOnly = startDate.toTimeString().split(' ')[0];
-        const endTimeOnly = endDate.toTimeString().split(' ')[0];
-        
-        // Kiểm tra thời gian hợp lệ
-        if (startDate >= endDate) {
-            return res.status(400).json({
-                success: false,
-                message: 'Thời gian kết thúc phải sau thời gian bắt đầu'
-            });
+        // Nếu có startTime và endTime dạng ISO (cho lịch làm việc bình thường)
+        if (startTime && endTime) {
+            updateData.StartTime = startTime;
+            updateData.EndTime = endTime;
+        } 
+        // Nếu có StartTime và EndTime dạng HH:MM (cho lịch nghỉ hoặc từ dropdown)
+        else if (StartTime && EndTime) {
+            // Tạo datetime từ WorkDate và time
+            updateData.StartTime = new Date(`${WorkDate}T${StartTime}:00`);
+            updateData.EndTime = new Date(`${WorkDate}T${EndTime}:00`);
         }
         
-        // Kiểm tra trùng lịch (trừ lịch hiện tại)
-        const [overlappingSchedules] = await connection.query(
-            `SELECT * FROM StaffSchedule 
-             WHERE MechanicID = ? AND WorkDate = ? AND ScheduleID != ?
-             AND ((StartTime <= ? AND EndTime > ?) OR (StartTime < ? AND EndTime >= ?) OR (StartTime >= ? AND EndTime <= ?))`,
-            [mechanicId, workDate, scheduleId, startTimeOnly, startTimeOnly, endTimeOnly, endTimeOnly, startTimeOnly, endTimeOnly]
-        );
-        
-        if (overlappingSchedules.length > 0) {
-            return res.status(400).json({
-                success: false,
-                message: 'Thời gian bị trùng với lịch làm việc khác'
-            });
-        }
-        
-        // Cập nhật lịch làm việc
+        // Update lịch làm việc
         await connection.query(
             `UPDATE StaffSchedule 
-             SET WorkDate = ?, StartTime = ?, EndTime = ?, Type = ?, Notes = ?, Status = 'Pending'
-             WHERE ScheduleID = ?`,
-            [workDate, startTimeOnly, endTimeOnly, type || 'available', notes || null, scheduleId]
+             SET WorkDate = ?, StartTime = ?, EndTime = ?, Type = ?, Notes = ?, IsAvailable = ?
+             WHERE ScheduleID = ? AND MechanicID = ?`,
+            [
+                updateData.WorkDate, 
+                updateData.StartTime, 
+                updateData.EndTime, 
+                updateData.Type, 
+                updateData.Notes, 
+                updateData.IsAvailable,
+                scheduleId, 
+                mechanicId
+            ]
         );
+        
+        // ========== GỬI THÔNG BÁO CHO ADMIN KHI ĐĂNG KÝ NGHỈ ==========
+        if (updateData.Type === 'unavailable' || updateData.IsAvailable === 0) {
+            // Lấy thông tin kỹ thuật viên
+            const [mechanic] = await connection.query(
+                'SELECT FullName, Phone FROM Users WHERE UserID = ?',
+                [mechanicId]
+            );
+            
+            const mechanicName = mechanic[0]?.FullName || 'Kỹ thuật viên';
+            const mechanicPhone = mechanic[0]?.Phone || '';
+            
+            // Format ngày đẹp hơn
+            const formattedDate = new Date(WorkDate).toLocaleDateString('vi-VN', {
+                weekday: 'long',
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+            });
+            
+            // Tìm tất cả admin (RoleID = 1)
+            const [admins] = await connection.query(
+                'SELECT UserID, FullName FROM Users WHERE RoleID = 1'
+            );
+            
+            // Tạo message đẹp
+            const notificationTitle = '🔴 Đơn xin nghỉ từ kỹ thuật viên';
+            const notificationMessage = `${mechanicName} (${mechanicPhone}) đã đăng ký nghỉ vào ${formattedDate}.\n\nLý do: ${Notes || 'Không có lý do cụ thể'}`;
+            
+            // Gửi thông báo cho từng admin
+            for (const admin of admins) {
+                await connection.query(
+                    `INSERT INTO Notifications (UserID, Title, Message, Type, ReferenceID, IsRead, CreatedAt) 
+                     VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+                    [
+                        admin.UserID,
+                        notificationTitle,
+                        notificationMessage,
+                        'leave_request', // Type đặc biệt để admin dễ filter
+                        scheduleId,
+                        0 // IsRead = 0 (chưa đọc)
+                    ]
+                );
+            }
+            
+            console.log(`✅ Đã gửi thông báo đơn xin nghỉ từ ${mechanicName} cho ${admins.length} admin(s)`);
+        }
+        // ========== KẾT THÚC LOGIC GỬI THÔNG BÁO ==========
         
         await connection.commit();
         
-        res.json({
-            success: true,
-            message: 'Cập nhật lịch làm việc thành công, đang chờ phê duyệt'
+        res.json({ 
+            success: true, 
+            message: updateData.Type === 'unavailable' ? 
+                'Đơn xin nghỉ đã được gửi đến admin' : 
+                'Cập nhật lịch làm việc thành công' 
         });
-    } catch (err) {
+        
+    } catch (error) {
         await connection.rollback();
-        console.error('Lỗi khi cập nhật lịch làm việc:', err);
-        res.status(500).json({
-            success: false,
-            message: 'Lỗi server: ' + err.message
+        console.error('Lỗi khi cập nhật lịch làm việc:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Lỗi server: ' + error.message 
         });
     } finally {
         connection.release();
     }
 });
+
 
 /**
  * API: Xóa lịch làm việc
@@ -845,5 +894,135 @@ router.put('/appointments/:id/status', authenticateToken, checkMechanicAccess, a
         connection.release();
     }
 });
+
+
+// ========== BONUS ROUTES: ADMIN QUẢN LÝ ĐơN XIN NGHỈ ==========
+
+/**
+ * API: Admin xem danh sách đơn xin nghỉ
+ * GET /api/mechanics/leave-requests
+ */
+router.get('/leave-requests', authenticateToken, checkAdminAccess, async (req, res) => {
+    try {
+        const { status } = req.query; // pending, approved, rejected
+        
+        let query = `
+            SELECT 
+                ss.ScheduleID,
+                ss.WorkDate,
+                ss.Notes,
+                ss.Status,
+                ss.CreatedAt,
+                u.UserID as MechanicID,
+                u.FullName as MechanicName,
+                u.Phone as MechanicPhone,
+                u.Email as MechanicEmail
+            FROM StaffSchedule ss
+            JOIN Users u ON ss.MechanicID = u.UserID
+            WHERE ss.Type = 'unavailable' AND ss.IsAvailable = 0
+        `;
+        
+        const params = [];
+        
+        if (status) {
+            query += ' AND ss.Status = ?';
+            params.push(status);
+        }
+        
+        query += ' ORDER BY ss.CreatedAt DESC';
+        
+        const [leaveRequests] = await pool.query(query, params);
+        
+        res.json({ 
+            success: true, 
+            data: leaveRequests,
+            total: leaveRequests.length
+        });
+        
+    } catch (error) {
+        console.error('Lỗi khi lấy danh sách đơn xin nghỉ:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Lỗi server: ' + error.message 
+        });
+    }
+});
+
+/**
+ * API: Admin duyệt/từ chối đơn xin nghỉ
+ * PUT /api/mechanics/leave-requests/:id/approve
+ */
+router.put('/leave-requests/:id/approve', authenticateToken, checkAdminAccess, async (req, res) => {
+    const connection = await pool.getConnection();
+    
+    try {
+        await connection.beginTransaction();
+        
+        const scheduleId = req.params.id;
+        const { approved, adminNotes } = req.body; // approved: true/false
+        
+        const newStatus = approved ? 'Approved' : 'Rejected';
+        
+        // Update status
+        await connection.query(
+            'UPDATE StaffSchedule SET Status = ?, AdminNotes = ? WHERE ScheduleID = ?',
+            [newStatus, adminNotes || null, scheduleId]
+        );
+        
+        // Lấy thông tin để gửi notification lại cho mechanic
+        const [schedule] = await connection.query(
+            `SELECT ss.*, u.FullName as MechanicName 
+             FROM StaffSchedule ss 
+             JOIN Users u ON ss.MechanicID = u.UserID 
+             WHERE ss.ScheduleID = ?`,
+            [scheduleId]
+        );
+        
+        if (schedule.length > 0) {
+            const mechanicId = schedule[0].MechanicID;
+            const formattedDate = new Date(schedule[0].WorkDate).toLocaleDateString('vi-VN');
+            
+            const notificationTitle = approved ? 
+                '✅ Đơn xin nghỉ đã được duyệt' : 
+                '❌ Đơn xin nghỉ bị từ chối';
+            
+            const notificationMessage = approved ?
+                `Đơn xin nghỉ của bạn vào ngày ${formattedDate} đã được duyệt.${adminNotes ? `\n\nGhi chú từ admin: ${adminNotes}` : ''}` :
+                `Đơn xin nghỉ của bạn vào ngày ${formattedDate} đã bị từ chối.${adminNotes ? `\n\nLý do: ${adminNotes}` : ''}`;
+            
+            await connection.query(
+                `INSERT INTO Notifications (UserID, Title, Message, Type, ReferenceID, IsRead, CreatedAt) 
+                 VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+                [
+                    mechanicId,
+                    notificationTitle,
+                    notificationMessage,
+                    'leave_response',
+                    scheduleId,
+                    0
+                ]
+            );
+        }
+        
+        await connection.commit();
+        
+        res.json({ 
+            success: true, 
+            message: approved ? 'Đã duyệt đơn xin nghỉ' : 'Đã từ chối đơn xin nghỉ' 
+        });
+        
+    } catch (error) {
+        await connection.rollback();
+        console.error('Lỗi khi xử lý đơn xin nghỉ:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Lỗi server: ' + error.message 
+        });
+    } finally {
+        connection.release();
+    }
+});
+
+// ========== KẾT THÚC BONUS ROUTES ==========
 
 module.exports = router;
