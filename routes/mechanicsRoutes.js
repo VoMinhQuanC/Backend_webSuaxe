@@ -214,7 +214,184 @@ router.put('/notifications/:id/read', authenticateToken, checkMechanicAccess, as
  * API: Lấy danh sách lịch làm việc của kỹ thuật viên
  * GET /api/mechanics/schedules
  * ĐÃ SỬA: Dùng StaffSchedule thay vì MechanicSchedules
+ * 
+ * API: Lấy danh sách lịch của TẤT CẢ kỹ thuật viên (để hiển thị trên calendar)
+ * GET /api/mechanics/schedules/all
+ * Query params: ?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
  */
+router.get('/schedules/all', authenticateToken, checkMechanicAccess, async (req, res) => {
+    try {
+        const { startDate, endDate } = req.query;
+        
+        let query = `
+            SELECT 
+                ss.ScheduleID,
+                ss.MechanicID,
+                ss.WorkDate,
+                ss.StartTime,
+                ss.EndTime,
+                ss.Type,
+                ss.IsAvailable,
+                ss.Notes,
+                ss.Status,
+                u.FullName as MechanicName,
+                u.Phone as MechanicPhone
+            FROM StaffSchedule ss
+            JOIN Users u ON ss.MechanicID = u.UserID
+            WHERE 1=1
+        `;
+        
+        const params = [];
+        
+        // Filter theo ngày nếu có
+        if (startDate) {
+            query += ' AND ss.WorkDate >= ?';
+            params.push(startDate);
+        }
+        
+        if (endDate) {
+            query += ' AND ss.WorkDate <= ?';
+            params.push(endDate);
+        }
+        
+        // Chỉ lấy lịch available (không lấy lịch nghỉ)
+        query += ' AND ss.Type = "available" AND ss.IsAvailable = 1';
+        
+        query += ' ORDER BY ss.WorkDate, ss.StartTime';
+        
+        const [allSchedules] = await pool.query(query, params);
+        
+        res.json({
+            success: true,
+            data: allSchedules,
+            total: allSchedules.length
+        });
+        
+    } catch (error) {
+        console.error('Lỗi khi lấy tất cả lịch kỹ thuật viên:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server: ' + error.message
+        });
+    }
+});
+
+/**
+ * API: Đếm số KTV đã đăng ký theo ngày
+ * GET /api/mechanics/schedules/count-by-date
+ * Query params: ?date=YYYY-MM-DD
+*/
+router.get('/schedules/count-by-date', authenticateToken, checkMechanicAccess, async (req, res) => {
+    try {
+        const { date } = req.query;
+        
+        if (!date) {
+            return res.status(400).json({
+                success: false,
+                message: 'Vui lòng cung cấp ngày'
+            });
+        }
+        
+        const [result] = await pool.query(
+            `SELECT COUNT(DISTINCT MechanicID) as mechanicCount
+             FROM StaffSchedule
+             WHERE WorkDate = ? 
+             AND Type = 'available' 
+             AND IsAvailable = 1`,
+            [date]
+        );
+        
+        res.json({
+            success: true,
+            date: date,
+            mechanicCount: result[0].mechanicCount,
+            maxMechanics: 6,
+            available: 6 - result[0].mechanicCount
+        });
+        
+    } catch (error) {
+        console.error('Lỗi khi đếm kỹ thuật viên:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server: ' + error.message
+        });
+    }
+});
+
+/**
+ * API: Kiểm tra overlap 4 tiếng
+ * POST /api/mechanics/schedules/check-overlap
+ * Body: { date, startTime, endTime, excludeScheduleId }
+*/
+router.post('/schedules/check-overlap', authenticateToken, checkMechanicAccess, async (req, res) => {
+    try {
+        const { date, startTime, endTime, excludeScheduleId } = req.body;
+        const mechanicId = req.user.userId;
+        
+        if (!date || !startTime || !endTime) {
+            return res.status(400).json({
+                success: false,
+                message: 'Thiếu thông tin ngày giờ'
+            });
+        }
+        
+        // Tạo datetime
+        const requestStart = new Date(`${date}T${startTime}`);
+        const requestEnd = new Date(`${date}T${endTime}`);
+        
+        // Tính 4 tiếng trước và sau
+        const fourHoursBefore = new Date(requestStart.getTime() - 4 * 60 * 60 * 1000);
+        const fourHoursAfter = new Date(requestStart.getTime() + 4 * 60 * 60 * 1000);
+        
+        // Query kiểm tra overlap
+        let query = `
+            SELECT 
+                ss.*,
+                u.FullName as MechanicName
+            FROM StaffSchedule ss
+            JOIN Users u ON ss.MechanicID = u.UserID
+            WHERE ss.MechanicID = ?
+            AND ss.WorkDate = ?
+            AND ss.Type = 'available'
+            AND ss.IsAvailable = 1
+            AND (
+                (ss.StartTime < ? AND ss.EndTime > ?)
+                OR (ss.StartTime >= ? AND ss.StartTime < ?)
+            )
+        `;
+        
+        const params = [
+            mechanicId,
+            date,
+            fourHoursAfter.toISOString(),
+            fourHoursBefore.toISOString(),
+            fourHoursBefore.toISOString(),
+            fourHoursAfter.toISOString()
+        ];
+        
+        // Loại trừ schedule hiện tại nếu đang edit
+        if (excludeScheduleId) {
+            query += ' AND ss.ScheduleID != ?';
+            params.push(excludeScheduleId);
+        }
+        
+        const [overlaps] = await pool.query(query, params);
+        
+        res.json({
+            success: true,
+            hasOverlap: overlaps.length > 0,
+            overlaps: overlaps
+        });
+        
+    } catch (error) {
+        console.error('Lỗi khi kiểm tra overlap:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server: ' + error.message
+        });
+    }
+});
+
 router.get('/schedules', authenticateToken, checkMechanicAccess, async (req, res) => {
     try {
         const mechanicId = req.user.userId;
@@ -1188,187 +1365,6 @@ router.put('/leave-requests/:id/approve', authenticateToken, checkAdminAccess, a
         connection.release();
     }
 });
-
-// ========== API: LẤY TẤT CẢ LỊCH CỦA TẤT CẢ KỸ THUẬT VIÊN (ĐỂ HIỂN THỊ TRÊN CALENDAR) ==========
-
-/**
- * API: Lấy danh sách lịch của TẤT CẢ kỹ thuật viên (để hiển thị trên calendar)
- * GET /api/mechanics/schedules/all
- * Query params: ?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
- */
-router.get('/schedules/all', authenticateToken, checkMechanicAccess, async (req, res) => {
-    try {
-        const { startDate, endDate } = req.query;
-        
-        let query = `
-            SELECT 
-                ss.ScheduleID,
-                ss.MechanicID,
-                ss.WorkDate,
-                ss.StartTime,
-                ss.EndTime,
-                ss.Type,
-                ss.IsAvailable,
-                ss.Notes,
-                ss.Status,
-                u.FullName as MechanicName,
-                u.Phone as MechanicPhone
-            FROM StaffSchedule ss
-            JOIN Users u ON ss.MechanicID = u.UserID
-            WHERE 1=1
-        `;
-        
-        const params = [];
-        
-        // Filter theo ngày nếu có
-        if (startDate) {
-            query += ' AND ss.WorkDate >= ?';
-            params.push(startDate);
-        }
-        
-        if (endDate) {
-            query += ' AND ss.WorkDate <= ?';
-            params.push(endDate);
-        }
-        
-        // Chỉ lấy lịch available (không lấy lịch nghỉ)
-        query += ' AND ss.Type = "available" AND ss.IsAvailable = 1';
-        
-        query += ' ORDER BY ss.WorkDate, ss.StartTime';
-        
-        const [allSchedules] = await pool.query(query, params);
-        
-        res.json({
-            success: true,
-            data: allSchedules,
-            total: allSchedules.length
-        });
-        
-    } catch (error) {
-        console.error('Lỗi khi lấy tất cả lịch kỹ thuật viên:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Lỗi server: ' + error.message
-        });
-    }
-});
-
-/**
- * API: Đếm số KTV đã đăng ký theo ngày
- * GET /api/mechanics/schedules/count-by-date
- * Query params: ?date=YYYY-MM-DD
- */
-router.get('/schedules/count-by-date', authenticateToken, checkMechanicAccess, async (req, res) => {
-    try {
-        const { date } = req.query;
-        
-        if (!date) {
-            return res.status(400).json({
-                success: false,
-                message: 'Vui lòng cung cấp ngày'
-            });
-        }
-        
-        const [result] = await pool.query(
-            `SELECT COUNT(DISTINCT MechanicID) as mechanicCount
-             FROM StaffSchedule
-             WHERE WorkDate = ? 
-             AND Type = 'available' 
-             AND IsAvailable = 1`,
-            [date]
-        );
-        
-        res.json({
-            success: true,
-            date: date,
-            mechanicCount: result[0].mechanicCount,
-            maxMechanics: 6,
-            available: 6 - result[0].mechanicCount
-        });
-        
-    } catch (error) {
-        console.error('Lỗi khi đếm kỹ thuật viên:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Lỗi server: ' + error.message
-        });
-    }
-});
-
-/**
- * API: Kiểm tra overlap 4 tiếng
- * POST /api/mechanics/schedules/check-overlap
- * Body: { date, startTime, endTime, excludeScheduleId }
- */
-router.post('/schedules/check-overlap', authenticateToken, checkMechanicAccess, async (req, res) => {
-    try {
-        const { date, startTime, endTime, excludeScheduleId } = req.body;
-        const mechanicId = req.user.userId;
-        
-        if (!date || !startTime || !endTime) {
-            return res.status(400).json({
-                success: false,
-                message: 'Thiếu thông tin ngày giờ'
-            });
-        }
-        
-        // Tạo datetime
-        const requestStart = new Date(`${date}T${startTime}`);
-        const requestEnd = new Date(`${date}T${endTime}`);
-        
-        // Tính 4 tiếng trước và sau
-        const fourHoursBefore = new Date(requestStart.getTime() - 4 * 60 * 60 * 1000);
-        const fourHoursAfter = new Date(requestStart.getTime() + 4 * 60 * 60 * 1000);
-        
-        // Query kiểm tra overlap
-        let query = `
-            SELECT 
-                ss.*,
-                u.FullName as MechanicName
-            FROM StaffSchedule ss
-            JOIN Users u ON ss.MechanicID = u.UserID
-            WHERE ss.MechanicID = ?
-            AND ss.WorkDate = ?
-            AND ss.Type = 'available'
-            AND ss.IsAvailable = 1
-            AND (
-                (ss.StartTime < ? AND ss.EndTime > ?)
-                OR (ss.StartTime >= ? AND ss.StartTime < ?)
-            )
-        `;
-        
-        const params = [
-            mechanicId,
-            date,
-            fourHoursAfter.toISOString(),
-            fourHoursBefore.toISOString(),
-            fourHoursBefore.toISOString(),
-            fourHoursAfter.toISOString()
-        ];
-        
-        // Loại trừ schedule hiện tại nếu đang edit
-        if (excludeScheduleId) {
-            query += ' AND ss.ScheduleID != ?';
-            params.push(excludeScheduleId);
-        }
-        
-        const [overlaps] = await pool.query(query, params);
-        
-        res.json({
-            success: true,
-            hasOverlap: overlaps.length > 0,
-            overlaps: overlaps
-        });
-        
-    } catch (error) {
-        console.error('Lỗi khi kiểm tra overlap:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Lỗi server: ' + error.message
-        });
-    }
-});
-
 
 // ========== KẾT THÚC BONUS ROUTES ==========
 
