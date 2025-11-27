@@ -283,20 +283,101 @@ router.get('/schedules', authenticateToken, checkMechanicAccess, async (req, res
 });
 
 /**
- * API: Thêm lịch làm việc mới
+ * API: Đăng ký lịch làm việc mới
  * POST /api/mechanics/schedules
- * ĐÃ SỬA: Dùng StaffSchedule thay vì MechanicSchedules
  */
 router.post('/schedules', authenticateToken, checkMechanicAccess, async (req, res) => {
     const connection = await pool.getConnection();
     try {
         await connection.beginTransaction();
         
-        const { startTime, endTime, type, notes } = req.body;
+        const { startTime, endTime, type, notes, WorkDate, StartTime, EndTime, Type, IsAvailable } = req.body;
         const mechanicId = req.user.userId;
         
-        // Kiểm tra dữ liệu đầu vào
+        // Parse dữ liệu
+        const isUnavailable = type === 'unavailable' || Type === 'unavailable' || IsAvailable === 0;
+        
+        // ===== THÊM VALIDATION 1: Thời gian tối thiểu 4 tiếng =====
+        if (!isUnavailable && startTime && endTime) {
+            const startDateTime = new Date(startTime);
+            const endDateTime = new Date(endTime);
+            const hoursDiff = (endDateTime - startDateTime) / (1000 * 60 * 60);
+            
+            if (hoursDiff < 4) {
+                await connection.rollback();
+                return res.status(400).json({
+                    success: false,
+                    message: 'Thời gian làm việc tối thiểu phải 4 tiếng'
+                });
+            }
+        }
+        
+        // ===== THÊM VALIDATION 2: Số lượng KTV (max 6) =====
+        const workDate = WorkDate || (startTime ? new Date(startTime).toISOString().split('T')[0] : null);
+        if (workDate && !isUnavailable) {
+            const [countResult] = await connection.query(
+                `SELECT COUNT(DISTINCT MechanicID) as mechanicCount
+                 FROM StaffSchedule
+                 WHERE WorkDate = ? 
+                 AND Type = 'available' 
+                 AND IsAvailable = 1`,
+                [workDate]
+            );
+            
+            if (countResult[0].mechanicCount >= 6) {
+                await connection.rollback();
+                return res.status(400).json({
+                    success: false,
+                    message: 'Đã đủ 6 kỹ thuật viên đăng ký ngày này. Vui lòng chọn ngày khác.'
+                });
+            }
+        }
+        
+        // ===== THÊM VALIDATION 3: Overlap 4 tiếng =====
+        if (!isUnavailable && startTime && endTime && workDate) {
+            const requestStart = new Date(startTime);
+            const fourHoursBefore = new Date(requestStart.getTime() - 4 * 60 * 60 * 1000);
+            const fourHoursAfter = new Date(requestStart.getTime() + 4 * 60 * 60 * 1000);
+            
+            const [overlaps] = await connection.query(
+                `SELECT ss.*, u.FullName as MechanicName
+                 FROM StaffSchedule ss
+                 JOIN Users u ON ss.MechanicID = u.UserID
+                 WHERE ss.MechanicID = ?
+                 AND ss.WorkDate = ?
+                 AND ss.Type = 'available'
+                 AND ss.IsAvailable = 1
+                 AND (
+                     (ss.StartTime < ? AND ss.EndTime > ?)
+                     OR (ss.StartTime >= ? AND ss.StartTime < ?)
+                 )`,
+                [
+                    mechanicId,
+                    workDate,
+                    fourHoursAfter.toISOString(),
+                    fourHoursBefore.toISOString(),
+                    fourHoursBefore.toISOString(),
+                    fourHoursAfter.toISOString()
+                ]
+            );
+            
+            if (overlaps.length > 0) {
+                await connection.rollback();
+                const existingTime = new Date(overlaps[0].StartTime).toLocaleTimeString('vi-VN', {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+                return res.status(400).json({
+                    success: false,
+                    message: `Bạn đã có lịch lúc ${existingTime}. Phải cách nhau tối thiểu 4 tiếng.`
+                });
+            }
+        }
+        // ===== KẾT THÚC VALIDATION MỚI =====
+        
+        // Kiểm tra dữ liệu đầu vào (code gốc)
         if (!startTime || !endTime) {
+            await connection.rollback();
             return res.status(400).json({
                 success: false,
                 message: 'Vui lòng cung cấp đầy đủ thời gian bắt đầu và kết thúc'
@@ -307,27 +388,29 @@ router.post('/schedules', authenticateToken, checkMechanicAccess, async (req, re
         const startDate = new Date(startTime);
         const endDate = new Date(endTime);
         
-        const workDate = startDate.toISOString().split('T')[0]; // YYYY-MM-DD
-        const startTimeOnly = startDate.toTimeString().split(' ')[0]; // HH:MM:SS
+        const scheduleWorkDate = startDate.toISOString().split('T')[0];
+        const startTimeOnly = startDate.toTimeString().split(' ')[0];
         const endTimeOnly = endDate.toTimeString().split(' ')[0];
         
         // Kiểm tra thời gian hợp lệ
         if (startDate >= endDate) {
+            await connection.rollback();
             return res.status(400).json({
                 success: false,
                 message: 'Thời gian kết thúc phải sau thời gian bắt đầu'
             });
         }
         
-        // Kiểm tra trùng lịch
+        // Kiểm tra trùng lịch (code gốc - giữ lại để double check)
         const [overlappingSchedules] = await connection.query(
             `SELECT * FROM StaffSchedule 
              WHERE MechanicID = ? AND WorkDate = ?
              AND ((StartTime <= ? AND EndTime > ?) OR (StartTime < ? AND EndTime >= ?) OR (StartTime >= ? AND EndTime <= ?))`,
-            [mechanicId, workDate, startTimeOnly, startTimeOnly, endTimeOnly, endTimeOnly, startTimeOnly, endTimeOnly]
+            [mechanicId, scheduleWorkDate, startTimeOnly, startTimeOnly, endTimeOnly, endTimeOnly, startTimeOnly, endTimeOnly]
         );
         
         if (overlappingSchedules.length > 0) {
+            await connection.rollback();
             return res.status(400).json({
                 success: false,
                 message: 'Thời gian bị trùng với lịch làm việc khác',
@@ -339,12 +422,12 @@ router.post('/schedules', authenticateToken, checkMechanicAccess, async (req, re
         const [result] = await connection.query(
             `INSERT INTO StaffSchedule (MechanicID, WorkDate, StartTime, EndTime, Type, Status, Notes, IsAvailable) 
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [mechanicId, workDate, startTimeOnly, endTimeOnly, type || 'available', 'Pending', notes || null, 1]
+            [mechanicId, scheduleWorkDate, startTimeOnly, endTimeOnly, type || 'available', 'Pending', notes || null, 1]
         );
         
         const scheduleId = result.insertId;
         
-        // Thông báo cho admin về lịch mới cần phê duyệt
+        // Thông báo cho admin
         const [adminUsers] = await connection.query(
             'SELECT UserID FROM Users WHERE RoleID = 1'
         );
@@ -355,7 +438,7 @@ router.post('/schedules', authenticateToken, checkMechanicAccess, async (req, re
                 [
                     admin.UserID,
                     'Lịch làm việc mới cần phê duyệt',
-                    `Kỹ thuật viên ID ${mechanicId} đã đăng ký lịch làm việc mới vào ngày ${workDate}`,
+                    `Kỹ thuật viên ID ${mechanicId} đã đăng ký lịch làm việc mới vào ngày ${scheduleWorkDate}`,
                     'schedule',
                     scheduleId
                 ]
@@ -381,22 +464,113 @@ router.post('/schedules', authenticateToken, checkMechanicAccess, async (req, re
     }
 });
 
+
+// ========== ROUTE SỬA: PUT /schedules/:id - THÊM VALIDATION ==========
 /**
  * API: Cập nhật lịch làm việc
  * PUT /api/mechanics/schedules/:id
- * ĐÃ SỬA: Dùng StaffSchedule thay vì MechanicSchedules
  */
 router.put('/schedules/:id', authenticateToken, checkMechanicAccess, async (req, res) => {
     const connection = await pool.getConnection();
-    
     try {
         await connection.beginTransaction();
         
         const scheduleId = req.params.id;
-        const { WorkDate, StartTime, EndTime, Type, Notes, IsAvailable, startTime, endTime } = req.body;
+        const { startTime, endTime, type, notes, WorkDate, StartTime, EndTime, Type, IsAvailable } = req.body;
         const mechanicId = req.user.userId;
         
-        // Kiểm tra lịch có thuộc về mechanic này không
+        // Parse dữ liệu
+        const isUnavailable = type === 'unavailable' || Type === 'unavailable' || IsAvailable === 0;
+        const workDate = WorkDate || (startTime ? new Date(startTime).toISOString().split('T')[0] : null);
+        
+        // ===== THÊM VALIDATION 1: Thời gian tối thiểu 4 tiếng =====
+        if (!isUnavailable && startTime && endTime) {
+            const startDateTime = new Date(startTime);
+            const endDateTime = new Date(endTime);
+            const hoursDiff = (endDateTime - startDateTime) / (1000 * 60 * 60);
+            
+            if (hoursDiff < 4) {
+                await connection.rollback();
+                return res.status(400).json({
+                    success: false,
+                    message: 'Thời gian làm việc tối thiểu phải 4 tiếng'
+                });
+            }
+        }
+        
+        // ===== THÊM VALIDATION 2: Số lượng KTV (chỉ khi đổi ngày) =====
+        if (workDate && !isUnavailable) {
+            const [oldSchedule] = await connection.query(
+                'SELECT WorkDate FROM StaffSchedule WHERE ScheduleID = ?',
+                [scheduleId]
+            );
+            
+            if (oldSchedule.length > 0 && oldSchedule[0].WorkDate !== workDate) {
+                const [countResult] = await connection.query(
+                    `SELECT COUNT(DISTINCT MechanicID) as mechanicCount
+                     FROM StaffSchedule
+                     WHERE WorkDate = ? 
+                     AND Type = 'available' 
+                     AND IsAvailable = 1
+                     AND ScheduleID != ?`,
+                    [workDate, scheduleId]
+                );
+                
+                if (countResult[0].mechanicCount >= 6) {
+                    await connection.rollback();
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Đã đủ 6 kỹ thuật viên đăng ký ngày này.'
+                    });
+                }
+            }
+        }
+        
+        // ===== THÊM VALIDATION 3: Overlap 4 tiếng =====
+        if (!isUnavailable && startTime && endTime && workDate) {
+            const requestStart = new Date(startTime);
+            const fourHoursBefore = new Date(requestStart.getTime() - 4 * 60 * 60 * 1000);
+            const fourHoursAfter = new Date(requestStart.getTime() + 4 * 60 * 60 * 1000);
+            
+            const [overlaps] = await connection.query(
+                `SELECT ss.*, u.FullName as MechanicName
+                 FROM StaffSchedule ss
+                 JOIN Users u ON ss.MechanicID = u.UserID
+                 WHERE ss.MechanicID = ?
+                 AND ss.WorkDate = ?
+                 AND ss.Type = 'available'
+                 AND ss.IsAvailable = 1
+                 AND ss.ScheduleID != ?
+                 AND (
+                     (ss.StartTime < ? AND ss.EndTime > ?)
+                     OR (ss.StartTime >= ? AND ss.StartTime < ?)
+                 )`,
+                [
+                    mechanicId,
+                    workDate,
+                    scheduleId,
+                    fourHoursAfter.toISOString(),
+                    fourHoursBefore.toISOString(),
+                    fourHoursBefore.toISOString(),
+                    fourHoursAfter.toISOString()
+                ]
+            );
+            
+            if (overlaps.length > 0) {
+                await connection.rollback();
+                const existingTime = new Date(overlaps[0].StartTime).toLocaleTimeString('vi-VN', {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+                return res.status(400).json({
+                    success: false,
+                    message: `Bạn đã có lịch lúc ${existingTime}. Phải cách nhau tối thiểu 4 tiếng.`
+                });
+            }
+        }
+        // ===== KẾT THÚC VALIDATION MỚI =====
+        
+        // Verify schedule belongs to this mechanic
         const [scheduleCheck] = await connection.query(
             'SELECT * FROM StaffSchedule WHERE ScheduleID = ? AND MechanicID = ?',
             [scheduleId, mechanicId]
@@ -404,115 +578,107 @@ router.put('/schedules/:id', authenticateToken, checkMechanicAccess, async (req,
         
         if (scheduleCheck.length === 0) {
             await connection.rollback();
-            return res.status(404).json({ success: false, message: 'Không tìm thấy lịch làm việc' });
+            return res.status(404).json({
+                success: false,
+                message: 'Không tìm thấy lịch làm việc hoặc bạn không có quyền chỉnh sửa'
+            });
         }
         
         // Chuẩn bị dữ liệu update
         let updateData = {
-            WorkDate: WorkDate,
-            Type: Type || 'available',
-            Notes: Notes || null,
-            IsAvailable: IsAvailable !== undefined ? IsAvailable : 1
+            Notes: notes
         };
         
-        // Nếu có startTime và endTime dạng ISO (cho lịch làm việc bình thường)
+        // Xử lý 2 formats: ISO datetime hoặc HH:MM
         if (startTime && endTime) {
-            updateData.StartTime = startTime;
-            updateData.EndTime = endTime;
-        } 
-        // Nếu có StartTime và EndTime dạng HH:MM (cho lịch nghỉ hoặc từ dropdown)
-        else if (StartTime && EndTime) {
-            // Tạo datetime từ WorkDate và time
-            updateData.StartTime = new Date(`${WorkDate}T${StartTime}:00`);
-            updateData.EndTime = new Date(`${WorkDate}T${EndTime}:00`);
+            // Format 1: ISO datetime (startTime/endTime)
+            if (startTime.includes('T')) {
+                updateData.StartTime = startTime;
+                updateData.EndTime = endTime;
+                updateData.WorkDate = new Date(startTime).toISOString().split('T')[0];
+            } 
+            // Format 2: HH:MM (StartTime/EndTime)
+            else {
+                updateData.WorkDate = WorkDate;
+                updateData.StartTime = new Date(`${WorkDate}T${startTime}`).toISOString();
+                updateData.EndTime = new Date(`${WorkDate}T${endTime}`).toISOString();
+            }
         }
         
-        // Update lịch làm việc
+        // Cập nhật Type và IsAvailable
+        if (Type !== undefined) {
+            updateData.Type = Type;
+        }
+        if (IsAvailable !== undefined) {
+            updateData.IsAvailable = IsAvailable;
+        }
+        
+        // Build UPDATE query
+        const updateFields = Object.keys(updateData).map(key => `${key} = ?`).join(', ');
+        const updateValues = [...Object.values(updateData), scheduleId];
+        
         await connection.query(
-            `UPDATE StaffSchedule 
-             SET WorkDate = ?, StartTime = ?, EndTime = ?, Type = ?, Notes = ?, IsAvailable = ?
-             WHERE ScheduleID = ? AND MechanicID = ?`,
-            [
-                updateData.WorkDate, 
-                updateData.StartTime, 
-                updateData.EndTime, 
-                updateData.Type, 
-                updateData.Notes, 
-                updateData.IsAvailable,
-                scheduleId, 
-                mechanicId
-            ]
+            `UPDATE StaffSchedule SET ${updateFields} WHERE ScheduleID = ?`,
+            updateValues
         );
         
-        // ========== GỬI THÔNG BÁO CHO ADMIN KHI ĐĂNG KÝ NGHỈ ==========
-        if (updateData.Type === 'unavailable' || updateData.IsAvailable === 0) {
-            // Lấy thông tin kỹ thuật viên
-            const [mechanic] = await connection.query(
+        // Nếu là đăng ký nghỉ, gửi notification cho admin
+        if (Type === 'unavailable' || IsAvailable === 0) {
+            const [mechanicInfo] = await connection.query(
                 'SELECT FullName, Phone FROM Users WHERE UserID = ?',
                 [mechanicId]
             );
             
-            const mechanicName = mechanic[0]?.FullName || 'Kỹ thuật viên';
-            const mechanicPhone = mechanic[0]?.Phone || '';
-            
-            // Format ngày đẹp hơn
-            const formattedDate = new Date(WorkDate).toLocaleDateString('vi-VN', {
+            const dateStr = new Date(updateData.WorkDate).toLocaleDateString('vi-VN', {
                 weekday: 'long',
                 year: 'numeric',
                 month: 'long',
                 day: 'numeric'
             });
             
-            // Tìm tất cả admin (RoleID = 1)
-            const [admins] = await connection.query(
-                'SELECT UserID, FullName FROM Users WHERE RoleID = 1'
+            const [adminUsers] = await connection.query(
+                'SELECT UserID FROM Users WHERE RoleID = 1'
             );
             
-            // Tạo message đẹp
-            const notificationTitle = '🔴 Đơn xin nghỉ từ kỹ thuật viên';
-            const notificationMessage = `${mechanicName} (${mechanicPhone}) đã đăng ký nghỉ vào ${formattedDate}.\n\nLý do: ${Notes || 'Không có lý do cụ thể'}`;
-            
-            // Gửi thông báo cho từng admin
-            for (const admin of admins) {
+            for (const admin of adminUsers) {
                 await connection.query(
-                    `INSERT INTO Notifications (UserID, Title, Message, Type, ReferenceID, IsRead, CreatedAt) 
-                     VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+                    'INSERT INTO Notifications (UserID, Title, Message, Type, ReferenceID, IsRead) VALUES (?, ?, ?, ?, ?, ?)',
                     [
                         admin.UserID,
-                        notificationTitle,
-                        notificationMessage,
-                        'leave_request', // Type đặc biệt để admin dễ filter
+                        '🔴 Đơn xin nghỉ từ kỹ thuật viên',
+                        `${mechanicInfo[0].FullName} (${mechanicInfo[0].Phone}) đã đăng ký nghỉ vào ${dateStr}.\n\nLý do: ${notes}`,
+                        'leave_request',
                         scheduleId,
-                        0 // IsRead = 0 (chưa đọc)
+                        0
                     ]
                 );
             }
             
-            console.log(`✅ Đã gửi thông báo đơn xin nghỉ từ ${mechanicName} cho ${admins.length} admin(s)`);
+            console.log(`✅ Đã gửi thông báo đơn xin nghỉ từ ${mechanicInfo[0].FullName} cho ${adminUsers.length} admin(s)`);
         }
-        // ========== KẾT THÚC LOGIC GỬI THÔNG BÁO ==========
         
         await connection.commit();
         
-        res.json({ 
-            success: true, 
-            message: updateData.Type === 'unavailable' ? 
-                'Đơn xin nghỉ đã được gửi đến admin' : 
-                'Cập nhật lịch làm việc thành công' 
+        const successMessage = (Type === 'unavailable' || IsAvailable === 0)
+            ? 'Đơn xin nghỉ đã được gửi đến admin. Vui lòng chờ phê duyệt.'
+            : 'Cập nhật lịch làm việc thành công!';
+        
+        res.json({
+            success: true,
+            message: successMessage
         });
         
-    } catch (error) {
+    } catch (err) {
         await connection.rollback();
-        console.error('Lỗi khi cập nhật lịch làm việc:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Lỗi server: ' + error.message 
+        console.error('Lỗi khi cập nhật lịch làm việc:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server: ' + err.message
         });
     } finally {
         connection.release();
     }
 });
-
 
 /**
  * API: Xóa lịch làm việc
@@ -1022,6 +1188,187 @@ router.put('/leave-requests/:id/approve', authenticateToken, checkAdminAccess, a
         connection.release();
     }
 });
+
+// ========== API: LẤY TẤT CẢ LỊCH CỦA TẤT CẢ KỸ THUẬT VIÊN (ĐỂ HIỂN THỊ TRÊN CALENDAR) ==========
+
+/**
+ * API: Lấy danh sách lịch của TẤT CẢ kỹ thuật viên (để hiển thị trên calendar)
+ * GET /api/mechanics/schedules/all
+ * Query params: ?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
+ */
+router.get('/schedules/all', authenticateToken, checkMechanicAccess, async (req, res) => {
+    try {
+        const { startDate, endDate } = req.query;
+        
+        let query = `
+            SELECT 
+                ss.ScheduleID,
+                ss.MechanicID,
+                ss.WorkDate,
+                ss.StartTime,
+                ss.EndTime,
+                ss.Type,
+                ss.IsAvailable,
+                ss.Notes,
+                ss.Status,
+                u.FullName as MechanicName,
+                u.Phone as MechanicPhone
+            FROM StaffSchedule ss
+            JOIN Users u ON ss.MechanicID = u.UserID
+            WHERE 1=1
+        `;
+        
+        const params = [];
+        
+        // Filter theo ngày nếu có
+        if (startDate) {
+            query += ' AND ss.WorkDate >= ?';
+            params.push(startDate);
+        }
+        
+        if (endDate) {
+            query += ' AND ss.WorkDate <= ?';
+            params.push(endDate);
+        }
+        
+        // Chỉ lấy lịch available (không lấy lịch nghỉ)
+        query += ' AND ss.Type = "available" AND ss.IsAvailable = 1';
+        
+        query += ' ORDER BY ss.WorkDate, ss.StartTime';
+        
+        const [allSchedules] = await pool.query(query, params);
+        
+        res.json({
+            success: true,
+            data: allSchedules,
+            total: allSchedules.length
+        });
+        
+    } catch (error) {
+        console.error('Lỗi khi lấy tất cả lịch kỹ thuật viên:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server: ' + error.message
+        });
+    }
+});
+
+/**
+ * API: Đếm số KTV đã đăng ký theo ngày
+ * GET /api/mechanics/schedules/count-by-date
+ * Query params: ?date=YYYY-MM-DD
+ */
+router.get('/schedules/count-by-date', authenticateToken, checkMechanicAccess, async (req, res) => {
+    try {
+        const { date } = req.query;
+        
+        if (!date) {
+            return res.status(400).json({
+                success: false,
+                message: 'Vui lòng cung cấp ngày'
+            });
+        }
+        
+        const [result] = await pool.query(
+            `SELECT COUNT(DISTINCT MechanicID) as mechanicCount
+             FROM StaffSchedule
+             WHERE WorkDate = ? 
+             AND Type = 'available' 
+             AND IsAvailable = 1`,
+            [date]
+        );
+        
+        res.json({
+            success: true,
+            date: date,
+            mechanicCount: result[0].mechanicCount,
+            maxMechanics: 6,
+            available: 6 - result[0].mechanicCount
+        });
+        
+    } catch (error) {
+        console.error('Lỗi khi đếm kỹ thuật viên:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server: ' + error.message
+        });
+    }
+});
+
+/**
+ * API: Kiểm tra overlap 4 tiếng
+ * POST /api/mechanics/schedules/check-overlap
+ * Body: { date, startTime, endTime, excludeScheduleId }
+ */
+router.post('/schedules/check-overlap', authenticateToken, checkMechanicAccess, async (req, res) => {
+    try {
+        const { date, startTime, endTime, excludeScheduleId } = req.body;
+        const mechanicId = req.user.userId;
+        
+        if (!date || !startTime || !endTime) {
+            return res.status(400).json({
+                success: false,
+                message: 'Thiếu thông tin ngày giờ'
+            });
+        }
+        
+        // Tạo datetime
+        const requestStart = new Date(`${date}T${startTime}`);
+        const requestEnd = new Date(`${date}T${endTime}`);
+        
+        // Tính 4 tiếng trước và sau
+        const fourHoursBefore = new Date(requestStart.getTime() - 4 * 60 * 60 * 1000);
+        const fourHoursAfter = new Date(requestStart.getTime() + 4 * 60 * 60 * 1000);
+        
+        // Query kiểm tra overlap
+        let query = `
+            SELECT 
+                ss.*,
+                u.FullName as MechanicName
+            FROM StaffSchedule ss
+            JOIN Users u ON ss.MechanicID = u.UserID
+            WHERE ss.MechanicID = ?
+            AND ss.WorkDate = ?
+            AND ss.Type = 'available'
+            AND ss.IsAvailable = 1
+            AND (
+                (ss.StartTime < ? AND ss.EndTime > ?)
+                OR (ss.StartTime >= ? AND ss.StartTime < ?)
+            )
+        `;
+        
+        const params = [
+            mechanicId,
+            date,
+            fourHoursAfter.toISOString(),
+            fourHoursBefore.toISOString(),
+            fourHoursBefore.toISOString(),
+            fourHoursAfter.toISOString()
+        ];
+        
+        // Loại trừ schedule hiện tại nếu đang edit
+        if (excludeScheduleId) {
+            query += ' AND ss.ScheduleID != ?';
+            params.push(excludeScheduleId);
+        }
+        
+        const [overlaps] = await pool.query(query, params);
+        
+        res.json({
+            success: true,
+            hasOverlap: overlaps.length > 0,
+            overlaps: overlaps
+        });
+        
+    } catch (error) {
+        console.error('Lỗi khi kiểm tra overlap:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server: ' + error.message
+        });
+    }
+});
+
 
 // ========== KẾT THÚC BONUS ROUTES ==========
 
