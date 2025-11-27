@@ -235,7 +235,7 @@ router.get('/schedules/all', authenticateToken, checkMechanicAccess, async (req,
                 ss.Notes,
                 ss.Status,
                 u.FullName as MechanicName,
-                u.Phone as MechanicPhone
+                u.PhoneNumber  as MechanicPhone
             FROM StaffSchedule ss
             JOIN Users u ON ss.MechanicID = u.UserID
             WHERE 1=1
