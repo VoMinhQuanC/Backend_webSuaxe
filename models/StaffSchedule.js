@@ -110,6 +110,32 @@ class StaffSchedule {
     }
 
     /**
+     * Get schedules for a specific mechanic within a date range
+     * @param {number} mechanicId Mechanic ID
+     * @param {string} startDate Start date in YYYY-MM-DD format
+     * @param {string} endDate End date in YYYY-MM-DD format
+     * @returns {Promise<Array>} List of schedules for the mechanic in the date range
+     */
+    static async getSchedulesByMechanicAndDateRange(mechanicId, startDate, endDate) {
+        try {
+            const [rows] = await pool.query(`
+                SELECT ss.*, u.FullName as MechanicName
+                FROM StaffSchedule ss
+                JOIN Users u ON ss.MechanicID = u.UserID
+                WHERE ss.MechanicID = ?
+                AND DATE(ss.WorkDate) BETWEEN ? AND ?
+                ORDER BY ss.WorkDate ASC, ss.StartTime ASC
+            `, [mechanicId, startDate, endDate]);
+            
+            return rows;
+        } catch (err) {
+            console.error('Error in getSchedulesByMechanicAndDateRange:', err);
+            throw err;
+        }
+    }
+
+
+    /**
      * Get all mechanics (users with RoleID = 3)
      * @returns {Promise<Array>} List of all mechanics
      */

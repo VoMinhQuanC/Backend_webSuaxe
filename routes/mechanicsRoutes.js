@@ -277,6 +277,49 @@ router.get('/schedules/all', authenticateToken, checkMechanicAccess, async (req,
 });
 
 /**
+ * API: Lấy lịch làm việc của kỹ thuật viên hiện tại theo khoảng thời gian
+ * GET /api/mechanics/schedules
+ * Query params: ?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
+ */
+router.get('/schedules', authenticateToken, checkMechanicAccess, async (req, res) => {
+    try {
+        const { startDate, endDate } = req.query;
+        const mechanicId = req.user.userId; // Lấy từ JWT token
+        
+        console.log('📅 Fetching schedules for mechanic:', mechanicId, 'from', startDate, 'to', endDate);
+        
+        // Validate params
+        if (!startDate || !endDate) {
+            return res.status(400).json({
+                success: false,
+                message: 'Thiếu tham số startDate hoặc endDate'
+            });
+        }
+        
+        // Call model method
+        const StaffSchedule = require('../models/StaffSchedule');
+        const schedules = await StaffSchedule.getSchedulesByMechanicAndDateRange(
+            mechanicId,
+            startDate,
+            endDate
+        );
+        
+        console.log('✅ Found schedules:', schedules.length);
+        
+        res.json({
+            success: true,
+            schedules: schedules
+        });
+    } catch (err) {
+        console.error('Lỗi khi lấy lịch làm việc của kỹ thuật viên:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server: ' + err.message
+        });
+    }
+});
+
+/**
  * API: Đếm số KTV đã đăng ký theo ngày
  * GET /api/mechanics/schedules/count-by-date
  * Query params: ?date=YYYY-MM-DD
