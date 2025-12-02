@@ -1034,17 +1034,26 @@ router.put('/schedules/:id/approve', authenticateToken, checkAdminAccess, async 
         
         const schedule = scheduleCheck[0];
         
-        if (schedule.Status !== 'Pending') {
+        // Kiểm tra trạng thái hợp lệ (Pending hoặc PendingLeave)
+        if (schedule.Status !== 'Pending' && schedule.Status !== 'PendingLeave') {
             return res.status(400).json({
                 success: false,
                 message: 'Lịch làm việc không ở trạng thái chờ phê duyệt'
             });
         }
         
+        // Xác định trạng thái mới và thông báo
+        const isLeaveRequest = schedule.Status === 'PendingLeave';
+        const newStatus = isLeaveRequest ? 'ApprovedLeave' : 'Approved';
+        const notificationTitle = isLeaveRequest ? 'Đơn xin nghỉ đã được duyệt' : 'Lịch làm việc đã được phê duyệt';
+        const notificationMessage = isLeaveRequest 
+            ? `Đơn xin nghỉ ngày ${schedule.WorkDate} đã được Admin duyệt. Bạn được phép nghỉ ca này.`
+            : `Lịch làm việc ngày ${schedule.WorkDate} từ ${schedule.StartTime} đến ${schedule.EndTime} đã được phê duyệt.`;
+        
         // Cập nhật trạng thái
         await connection.query(
-            'UPDATE StaffSchedule SET Status = ? WHERE ScheduleID = ?',
-            ['Approved', scheduleId]
+            'UPDATE StaffSchedule SET Status = ?, UpdatedAt = NOW() WHERE ScheduleID = ?',
+            [newStatus, scheduleId]
         );
         
         // Thông báo cho kỹ thuật viên
@@ -1052,8 +1061,8 @@ router.put('/schedules/:id/approve', authenticateToken, checkAdminAccess, async 
             'INSERT INTO Notifications (UserID, Title, Message, Type, ReferenceID) VALUES (?, ?, ?, ?, ?)',
             [
                 schedule.MechanicID,
-                'Lịch làm việc đã được phê duyệt',
-                `Lịch làm việc ngày ${schedule.WorkDate} từ ${schedule.StartTime} đến ${schedule.EndTime} đã được phê duyệt.`,
+                notificationTitle,
+                notificationMessage,
                 'schedule',
                 scheduleId
             ]
@@ -1063,7 +1072,7 @@ router.put('/schedules/:id/approve', authenticateToken, checkAdminAccess, async 
         
         res.json({
             success: true,
-            message: 'Phê duyệt lịch làm việc thành công'
+            message: isLeaveRequest ? 'Duyệt đơn xin nghỉ thành công' : 'Phê duyệt lịch làm việc thành công'
         });
     } catch (err) {
         await connection.rollback();
@@ -1103,26 +1112,43 @@ router.put('/schedules/:id/reject', authenticateToken, checkAdminAccess, async (
         
         const schedule = scheduleCheck[0];
         
-        if (schedule.Status !== 'Pending') {
+        // Kiểm tra trạng thái hợp lệ (Pending hoặc PendingLeave)
+        if (schedule.Status !== 'Pending' && schedule.Status !== 'PendingLeave') {
             return res.status(400).json({
                 success: false,
                 message: 'Lịch làm việc không ở trạng thái chờ phê duyệt'
             });
         }
         
+        // Xác định trạng thái mới và thông báo
+        const isLeaveRequest = schedule.Status === 'PendingLeave';
+        const newStatus = isLeaveRequest ? 'RejectedLeave' : 'Rejected';
+        const notificationTitle = isLeaveRequest ? 'Đơn xin nghỉ bị từ chối' : 'Lịch làm việc bị từ chối';
+        const notificationMessage = isLeaveRequest 
+            ? `Đơn xin nghỉ ngày ${schedule.WorkDate} đã bị Admin từ chối. ${reason ? 'Lý do: ' + reason : 'Vui lòng liên hệ Admin để biết thêm chi tiết.'}`
+            : `Lịch làm việc ngày ${schedule.WorkDate} đã bị từ chối. Lý do: ${reason || 'Không có lý do cụ thể.'}`;
+        
         // Cập nhật trạng thái
-        await connection.query(
-            'UPDATE StaffSchedule SET Status = ? WHERE ScheduleID = ?',
-            ['Rejected', scheduleId]
-        );
+        // Nếu là đơn xin nghỉ bị từ chối, đổi lại Type thành available
+        if (isLeaveRequest) {
+            await connection.query(
+                'UPDATE StaffSchedule SET Status = ?, Type = ?, IsAvailable = 1, UpdatedAt = NOW() WHERE ScheduleID = ?',
+                [newStatus, 'available', scheduleId]
+            );
+        } else {
+            await connection.query(
+                'UPDATE StaffSchedule SET Status = ?, UpdatedAt = NOW() WHERE ScheduleID = ?',
+                [newStatus, scheduleId]
+            );
+        }
         
         // Thông báo cho kỹ thuật viên
         await connection.query(
             'INSERT INTO Notifications (UserID, Title, Message, Type, ReferenceID) VALUES (?, ?, ?, ?, ?)',
             [
                 schedule.MechanicID,
-                'Lịch làm việc bị từ chối',
-                `Lịch làm việc ngày ${schedule.WorkDate} đã bị từ chối. Lý do: ${reason || 'Không có lý do cụ thể.'}`,
+                notificationTitle,
+                notificationMessage,
                 'schedule',
                 scheduleId
             ]
@@ -1132,7 +1158,7 @@ router.put('/schedules/:id/reject', authenticateToken, checkAdminAccess, async (
         
         res.json({
             success: true,
-            message: 'Từ chối lịch làm việc thành công'
+            message: isLeaveRequest ? 'Từ chối đơn xin nghỉ thành công' : 'Từ chối lịch làm việc thành công'
         });
     } catch (err) {
         await connection.rollback();
@@ -1143,6 +1169,112 @@ router.put('/schedules/:id/reject', authenticateToken, checkAdminAccess, async (
         });
     } finally {
         connection.release();
+    }
+});
+
+// ============================================
+// LEAVE REQUEST APIs (Quản lý đơn xin nghỉ)
+// ============================================
+
+/**
+ * API: Lấy thống kê đơn xin nghỉ (Admin)
+ * GET /api/mechanics/leave-requests/stats
+ */
+router.get('/leave-requests/stats', authenticateToken, checkAdminAccess, async (req, res) => {
+    try {
+        // Đếm số đơn chờ duyệt
+        const [pendingResult] = await pool.query(`
+            SELECT COUNT(*) as count 
+            FROM StaffSchedule 
+            WHERE Status = 'PendingLeave'
+        `);
+        
+        // Đếm số KTV nghỉ hôm nay
+        const today = new Date().toISOString().split('T')[0];
+        const [todayLeaveResult] = await pool.query(`
+            SELECT COUNT(DISTINCT MechanicID) as count 
+            FROM StaffSchedule 
+            WHERE DATE(WorkDate) = ? 
+            AND Type = 'unavailable' 
+            AND Status IN ('Approved', 'ApprovedLeave')
+        `, [today]);
+        
+        res.json({
+            success: true,
+            stats: {
+                pending: pendingResult[0].count,
+                todayLeave: todayLeaveResult[0].count
+            }
+        });
+    } catch (err) {
+        console.error('Error getting leave request stats:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server: ' + err.message
+        });
+    }
+});
+
+/**
+ * API: Lấy danh sách đơn xin nghỉ (Admin)
+ * GET /api/mechanics/leave-requests
+ */
+router.get('/leave-requests', authenticateToken, checkAdminAccess, async (req, res) => {
+    try {
+        const { from, to } = req.query;
+        
+        let dateCondition = '';
+        const params = [];
+        
+        if (from && to) {
+            dateCondition = 'AND DATE(ss.WorkDate) BETWEEN ? AND ?';
+            params.push(from, to);
+        }
+        
+        // Lấy đơn chờ duyệt
+        const [pending] = await pool.query(`
+            SELECT ss.*, u.FullName as MechanicName, u.PhoneNumber as Phone
+            FROM StaffSchedule ss
+            JOIN Users u ON ss.MechanicID = u.UserID
+            WHERE ss.Status = 'PendingLeave' ${dateCondition}
+            ORDER BY ss.WorkDate ASC
+        `, params);
+        
+        // Lấy đơn đã duyệt
+        const [approved] = await pool.query(`
+            SELECT ss.*, u.FullName as MechanicName, u.PhoneNumber as Phone
+            FROM StaffSchedule ss
+            JOIN Users u ON ss.MechanicID = u.UserID
+            WHERE ss.Type = 'unavailable' 
+            AND ss.Status IN ('Approved', 'ApprovedLeave')
+            ${dateCondition}
+            ORDER BY ss.WorkDate DESC
+        `, params);
+        
+        // Lấy đơn đã từ chối
+        const [rejected] = await pool.query(`
+            SELECT ss.*, u.FullName as MechanicName, u.PhoneNumber as Phone
+            FROM StaffSchedule ss
+            JOIN Users u ON ss.MechanicID = u.UserID
+            WHERE ss.Status = 'RejectedLeave'
+            ${dateCondition}
+            ORDER BY ss.WorkDate DESC
+        `, params);
+        
+        res.json({
+            success: true,
+            leaveRequests: {
+                pending,
+                approved,
+                rejected
+            }
+        });
+    } catch (err) {
+        console.error('Error getting leave requests:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server: ' + err.message
+        });
     }
 });
 
