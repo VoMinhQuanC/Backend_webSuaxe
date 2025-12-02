@@ -362,6 +362,302 @@ router.get('/schedules/count-by-date', authenticateToken, checkMechanicAccess, a
 });
 
 /**
+ * API: Kiểm tra lịch có thể sửa được không
+ * GET /api/mechanics/schedules/check-can-edit/:id
+ * Trả về: canEdit, canLeave, hasBooking, daysUntil, lockReason
+ */
+router.get('/schedules/check-can-edit/:id', authenticateToken, checkMechanicAccess, async (req, res) => {
+    try {
+        const scheduleId = req.params.id;
+        const mechanicId = req.user.userId;
+        
+        // Lấy thông tin schedule
+        const [scheduleCheck] = await pool.query(
+            'SELECT * FROM StaffSchedule WHERE ScheduleID = ? AND MechanicID = ?',
+            [scheduleId, mechanicId]
+        );
+        
+        if (scheduleCheck.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Không tìm thấy lịch làm việc'
+            });
+        }
+        
+        const schedule = scheduleCheck[0];
+        const workDate = new Date(schedule.WorkDate);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        workDate.setHours(0, 0, 0, 0);
+        
+        // Tính số ngày còn lại
+        const diffTime = workDate - today;
+        const daysUntil = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        
+        // Kiểm tra booking trong ngày đó
+        const [relatedAppointments] = await pool.query(
+            `SELECT AppointmentID, AppointmentDate, Status, Notes 
+             FROM Appointments 
+             WHERE MechanicID = ? 
+             AND DATE(AppointmentDate) = ?
+             AND Status NOT IN ('Canceled', 'Completed')
+             AND IsDeleted = 0`,
+            [mechanicId, schedule.WorkDate]
+        );
+        
+        const hasBooking = relatedAppointments.length > 0;
+        const bookingCount = relatedAppointments.length;
+        
+        // Xác định trạng thái
+        let canEdit = true;
+        let canLeave = true;
+        let lockReason = null;
+        
+        // Ràng buộc 1: Dưới 2 ngày → Không được sửa, chỉ được nghỉ
+        if (daysUntil < 2) {
+            canEdit = false;
+            lockReason = `Chỉ có thể sửa lịch trước 2 ngày. Còn ${daysUntil} ngày nữa đến ngày làm việc.`;
+        }
+        
+        // Ràng buộc 2: Có booking → Không được sửa, chỉ được nghỉ
+        if (hasBooking) {
+            canEdit = false;
+            lockReason = `Lịch này đã có ${bookingCount} khách đặt. Bạn không thể sửa, chỉ có thể xin nghỉ.`;
+        }
+        
+        // Ràng buộc 3: Đã qua ngày làm → Không được làm gì
+        if (daysUntil < 0) {
+            canEdit = false;
+            canLeave = false;
+            lockReason = 'Lịch này đã qua, không thể thay đổi.';
+        }
+        
+        // Ràng buộc 4: Đang chờ duyệt → Không được sửa
+        if (schedule.Status === 'PendingEdit' || schedule.Status === 'PendingLeave') {
+            canEdit = false;
+            canLeave = false;
+            lockReason = 'Lịch này đang chờ Admin duyệt, vui lòng đợi.';
+        }
+        
+        res.json({
+            success: true,
+            scheduleId: parseInt(scheduleId),
+            workDate: schedule.WorkDate,
+            daysUntil: daysUntil,
+            hasBooking: hasBooking,
+            bookingCount: bookingCount,
+            canEdit: canEdit,
+            canLeave: canLeave,
+            lockReason: lockReason,
+            status: schedule.Status
+        });
+        
+    } catch (error) {
+        console.error('Lỗi khi kiểm tra can-edit:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server: ' + error.message
+        });
+    }
+});
+
+/**
+ * API: Gửi đơn xin sửa lịch
+ * POST /api/mechanics/schedules/:id/request-edit
+ * Body: { newWorkDate, newStartTime, newEndTime, reason }
+ */
+router.post('/schedules/:id/request-edit', authenticateToken, checkMechanicAccess, async (req, res) => {
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+        
+        const scheduleId = req.params.id;
+        const mechanicId = req.user.userId;
+        const { newWorkDate, newStartTime, newEndTime, reason } = req.body;
+        
+        // Validate input
+        if (!newWorkDate || !newStartTime || !newEndTime) {
+            return res.status(400).json({
+                success: false,
+                message: 'Vui lòng điền đầy đủ thông tin ngày giờ mới'
+            });
+        }
+        
+        if (!reason || reason.trim() === '') {
+            return res.status(400).json({
+                success: false,
+                message: 'Vui lòng nhập lý do xin sửa lịch'
+            });
+        }
+        
+        // Lấy thông tin schedule
+        const [scheduleCheck] = await connection.query(
+            'SELECT * FROM StaffSchedule WHERE ScheduleID = ? AND MechanicID = ?',
+            [scheduleId, mechanicId]
+        );
+        
+        if (scheduleCheck.length === 0) {
+            await connection.rollback();
+            return res.status(404).json({
+                success: false,
+                message: 'Không tìm thấy lịch làm việc'
+            });
+        }
+        
+        const schedule = scheduleCheck[0];
+        
+        // Kiểm tra 2 ngày
+        const workDate = new Date(schedule.WorkDate);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        workDate.setHours(0, 0, 0, 0);
+        const daysUntil = Math.ceil((workDate - today) / (1000 * 60 * 60 * 24));
+        
+        if (daysUntil < 2) {
+            await connection.rollback();
+            return res.status(400).json({
+                success: false,
+                message: `Chỉ có thể xin sửa lịch trước 2 ngày. Còn ${daysUntil} ngày nữa đến ngày làm việc.`
+            });
+        }
+        
+        // Kiểm tra booking
+        const [relatedAppointments] = await connection.query(
+            `SELECT AppointmentID FROM Appointments 
+             WHERE MechanicID = ? AND DATE(AppointmentDate) = ?
+             AND Status NOT IN ('Canceled', 'Completed') AND IsDeleted = 0`,
+            [mechanicId, schedule.WorkDate]
+        );
+        
+        if (relatedAppointments.length > 0) {
+            await connection.rollback();
+            return res.status(400).json({
+                success: false,
+                message: 'Lịch này đã có khách đặt, không thể xin sửa. Nếu cần, bạn chỉ có thể xin nghỉ.'
+            });
+        }
+        
+        // Tạo JSON lưu thông tin xin sửa
+        const editRequestData = {
+            editRequest: {
+                newWorkDate: newWorkDate,
+                newStartTime: newStartTime,
+                newEndTime: newEndTime,
+                reason: reason.trim(),
+                requestedAt: new Date().toISOString(),
+                originalWorkDate: schedule.WorkDate,
+                originalStartTime: schedule.StartTime,
+                originalEndTime: schedule.EndTime
+            }
+        };
+        
+        // Cập nhật schedule
+        await connection.query(
+            `UPDATE StaffSchedule 
+             SET Status = 'PendingEdit', Notes = ?
+             WHERE ScheduleID = ?`,
+            [JSON.stringify(editRequestData), scheduleId]
+        );
+        
+        // Gửi notification cho Admin
+        const [mechanicInfo] = await connection.query(
+            'SELECT FullName, PhoneNumber FROM Users WHERE UserID = ?',
+            [mechanicId]
+        );
+        
+        const oldDateStr = new Date(schedule.WorkDate).toLocaleDateString('vi-VN');
+        const newDateStr = new Date(newWorkDate).toLocaleDateString('vi-VN');
+        
+        const [admins] = await connection.query(
+            'SELECT UserID FROM Users WHERE RoleID = 1 AND Status = 1'
+        );
+        
+        for (const admin of admins) {
+            await connection.query(
+                `INSERT INTO Notifications (UserID, Title, Message, Type, IsRead, CreatedAt)
+                 VALUES (?, ?, ?, 'schedule_edit_request', 0, NOW())`,
+                [
+                    admin.UserID,
+                    'Đơn xin sửa lịch',
+                    `${mechanicInfo[0]?.FullName || 'KTV'} xin sửa lịch từ ${oldDateStr} sang ${newDateStr}.\n\nLý do: ${reason.trim()}`
+                ]
+            );
+        }
+        
+        await connection.commit();
+        
+        res.json({
+            success: true,
+            message: 'Đã gửi đơn xin sửa lịch. Vui lòng đợi Admin duyệt.'
+        });
+        
+    } catch (error) {
+        await connection.rollback();
+        console.error('Lỗi khi gửi đơn xin sửa:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server: ' + error.message
+        });
+    } finally {
+        connection.release();
+    }
+});
+
+/**
+ * API: Kiểm tra lịch có booking (khách đặt) chưa
+ * GET /api/mechanics/schedules/check-booking/:id
+ */
+router.get('/schedules/check-booking/:id', authenticateToken, checkMechanicAccess, async (req, res) => {
+    try {
+        const scheduleId = req.params.id;
+        const mechanicId = req.user.userId;
+        
+        // Lấy thông tin schedule
+        const [scheduleCheck] = await pool.query(
+            'SELECT * FROM StaffSchedule WHERE ScheduleID = ? AND MechanicID = ?',
+            [scheduleId, mechanicId]
+        );
+        
+        if (scheduleCheck.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Không tìm thấy lịch làm việc'
+            });
+        }
+        
+        const schedule = scheduleCheck[0];
+        
+        // Kiểm tra booking trong ngày đó
+        const [relatedAppointments] = await pool.query(
+            `SELECT AppointmentID, AppointmentDate, Status, Notes 
+             FROM Appointments 
+             WHERE MechanicID = ? 
+             AND DATE(AppointmentDate) = ?
+             AND Status NOT IN ('Canceled', 'Completed')
+             AND IsDeleted = 0`,
+            [mechanicId, schedule.WorkDate]
+        );
+        
+        res.json({
+            success: true,
+            scheduleId: scheduleId,
+            hasBooking: relatedAppointments.length > 0,
+            bookingCount: relatedAppointments.length,
+            message: relatedAppointments.length > 0 
+                ? `Lịch này đã có ${relatedAppointments.length} khách đặt. Không thể sửa.`
+                : 'Lịch chưa có khách đặt'
+        });
+        
+    } catch (error) {
+        console.error('Lỗi khi kiểm tra booking:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server: ' + error.message
+        });
+    }
+});
+
+/**
  * API: Kiểm tra overlap 4 tiếng
  * POST /api/mechanics/schedules/check-overlap
  * Body: { date, startTime, endTime, excludeScheduleId }
@@ -807,6 +1103,32 @@ router.put('/schedules/:id', authenticateToken, checkMechanicAccess, async (req,
             });
         }
         
+        // ===== CHECK BOOKING: Không cho sửa lịch đã có khách đặt =====
+        const schedule = scheduleCheck[0];
+        const [relatedAppointments] = await connection.query(
+            `SELECT AppointmentID, AppointmentDate, Status, Notes 
+             FROM Appointments 
+             WHERE MechanicID = ? 
+             AND DATE(AppointmentDate) = ?
+             AND Status NOT IN ('Canceled', 'Completed')
+             AND IsDeleted = 0`,
+            [mechanicId, schedule.WorkDate]
+        );
+
+        if (relatedAppointments.length > 0) {
+            // Nếu là đơn xin nghỉ (Type = unavailable) thì vẫn cho phép
+            if (Type !== 'unavailable' && IsAvailable !== 0) {
+                await connection.rollback();
+                return res.status(400).json({
+                    success: false,
+                    message: 'Không thể sửa lịch đã có khách đặt. Bạn chỉ có thể xin nghỉ nếu cần.',
+                    hasBooking: true,
+                    bookingCount: relatedAppointments.length
+                });
+            }
+        }
+        // ===== KẾT THÚC CHECK BOOKING =====
+        
         // Chuẩn bị dữ liệu update
         let updateData = {};
         
@@ -1038,23 +1360,74 @@ router.put('/schedules/:id/approve', authenticateToken, checkAdminAccess, async 
         
         const schedule = scheduleCheck[0];
         
-        // Kiểm tra trạng thái hợp lệ (Pending hoặc PendingLeave)
-        if (schedule.Status !== 'Pending' && schedule.Status !== 'PendingLeave') {
+        // Kiểm tra trạng thái hợp lệ (Pending, PendingLeave, hoặc PendingEdit)
+        if (!['Pending', 'PendingLeave', 'PendingEdit'].includes(schedule.Status)) {
             return res.status(400).json({
                 success: false,
                 message: 'Lịch làm việc không ở trạng thái chờ phê duyệt'
             });
         }
         
-        // Xác định trạng thái mới và thông báo
+        // Xác định loại request
         const isLeaveRequest = schedule.Status === 'PendingLeave';
-        const newStatus = isLeaveRequest ? 'ApprovedLeave' : 'Approved';
-        const notificationTitle = isLeaveRequest ? 'Đơn xin nghỉ đã được duyệt' : 'Lịch làm việc đã được phê duyệt';
-        const notificationMessage = isLeaveRequest 
-            ? `Đơn xin nghỉ ngày ${schedule.WorkDate} đã được Admin duyệt. Bạn được phép nghỉ ca này.`
-            : `Lịch làm việc ngày ${schedule.WorkDate} từ ${schedule.StartTime} đến ${schedule.EndTime} đã được phê duyệt.`;
+        const isEditRequest = schedule.Status === 'PendingEdit';
         
-        // Cập nhật trạng thái
+        let newStatus = 'Approved';
+        let notificationTitle = 'Lịch làm việc đã được phê duyệt';
+        let notificationMessage = `Lịch làm việc ngày ${schedule.WorkDate} từ ${schedule.StartTime} đến ${schedule.EndTime} đã được phê duyệt.`;
+        
+        if (isLeaveRequest) {
+            newStatus = 'ApprovedLeave';
+            notificationTitle = 'Đơn xin nghỉ đã được duyệt';
+            notificationMessage = `Đơn xin nghỉ ngày ${schedule.WorkDate} đã được Admin duyệt. Bạn được phép nghỉ ca này.`;
+        } else if (isEditRequest) {
+            // Parse edit request từ Notes
+            let editData = null;
+            try {
+                const notesData = JSON.parse(schedule.Notes || '{}');
+                editData = notesData.editRequest;
+            } catch (e) {
+                console.error('Lỗi parse edit request:', e);
+            }
+            
+            if (editData) {
+                // Cập nhật lịch với thông tin mới
+                await connection.query(
+                    `UPDATE StaffSchedule 
+                     SET WorkDate = ?, StartTime = ?, EndTime = ?, 
+                         Status = 'Approved', Notes = NULL, UpdatedAt = NOW()
+                     WHERE ScheduleID = ?`,
+                    [editData.newWorkDate, editData.newStartTime, editData.newEndTime, scheduleId]
+                );
+                
+                const oldDateStr = new Date(editData.originalWorkDate).toLocaleDateString('vi-VN');
+                const newDateStr = new Date(editData.newWorkDate).toLocaleDateString('vi-VN');
+                
+                notificationTitle = 'Đơn xin sửa lịch đã được duyệt';
+                notificationMessage = `Đơn xin sửa lịch từ ${oldDateStr} sang ${newDateStr} (${editData.newStartTime} - ${editData.newEndTime}) đã được Admin duyệt.`;
+                
+                // Thông báo cho kỹ thuật viên
+                await connection.query(
+                    'INSERT INTO Notifications (UserID, Title, Message, Type, ReferenceID) VALUES (?, ?, ?, ?, ?)',
+                    [schedule.MechanicID, notificationTitle, notificationMessage, 'schedule', scheduleId]
+                );
+                
+                await connection.commit();
+                
+                return res.json({
+                    success: true,
+                    message: 'Duyệt đơn xin sửa lịch thành công'
+                });
+            } else {
+                await connection.rollback();
+                return res.status(400).json({
+                    success: false,
+                    message: 'Không tìm thấy thông tin xin sửa lịch'
+                });
+            }
+        }
+        
+        // Cập nhật trạng thái (cho Pending và PendingLeave)
         await connection.query(
             'UPDATE StaffSchedule SET Status = ?, UpdatedAt = NOW() WHERE ScheduleID = ?',
             [newStatus, scheduleId]
@@ -1116,28 +1489,47 @@ router.put('/schedules/:id/reject', authenticateToken, checkAdminAccess, async (
         
         const schedule = scheduleCheck[0];
         
-        // Kiểm tra trạng thái hợp lệ (Pending hoặc PendingLeave)
-        if (schedule.Status !== 'Pending' && schedule.Status !== 'PendingLeave') {
+        // Kiểm tra trạng thái hợp lệ (Pending, PendingLeave, hoặc PendingEdit)
+        if (!['Pending', 'PendingLeave', 'PendingEdit'].includes(schedule.Status)) {
             return res.status(400).json({
                 success: false,
                 message: 'Lịch làm việc không ở trạng thái chờ phê duyệt'
             });
         }
         
-        // Xác định trạng thái mới và thông báo
+        // Xác định loại request
         const isLeaveRequest = schedule.Status === 'PendingLeave';
-        const newStatus = isLeaveRequest ? 'RejectedLeave' : 'Rejected';
-        const notificationTitle = isLeaveRequest ? 'Đơn xin nghỉ bị từ chối' : 'Lịch làm việc bị từ chối';
-        const notificationMessage = isLeaveRequest 
-            ? `Đơn xin nghỉ ngày ${schedule.WorkDate} đã bị Admin từ chối. ${reason ? 'Lý do: ' + reason : 'Vui lòng liên hệ Admin để biết thêm chi tiết.'}`
-            : `Lịch làm việc ngày ${schedule.WorkDate} đã bị từ chối. Lý do: ${reason || 'Không có lý do cụ thể.'}`;
+        const isEditRequest = schedule.Status === 'PendingEdit';
         
-        // Cập nhật trạng thái
-        // Nếu là đơn xin nghỉ bị từ chối, đổi lại Type thành available
+        let newStatus = 'Rejected';
+        let notificationTitle = 'Lịch làm việc bị từ chối';
+        let notificationMessage = `Lịch làm việc ngày ${schedule.WorkDate} đã bị từ chối. Lý do: ${reason || 'Không có lý do cụ thể.'}`;
+        
         if (isLeaveRequest) {
+            newStatus = 'RejectedLeave';
+            notificationTitle = 'Đơn xin nghỉ bị từ chối';
+            notificationMessage = `Đơn xin nghỉ ngày ${schedule.WorkDate} đã bị Admin từ chối. ${reason ? 'Lý do: ' + reason : 'Vui lòng liên hệ Admin để biết thêm chi tiết.'}`;
+            
+            // Đổi lại Type thành available
             await connection.query(
                 'UPDATE StaffSchedule SET Status = ?, Type = ?, IsAvailable = 1, UpdatedAt = NOW() WHERE ScheduleID = ?',
                 [newStatus, 'available', scheduleId]
+            );
+        } else if (isEditRequest) {
+            // Parse edit request để lấy thông tin hiển thị
+            let editData = null;
+            try {
+                const notesData = JSON.parse(schedule.Notes || '{}');
+                editData = notesData.editRequest;
+            } catch (e) {}
+            
+            notificationTitle = 'Đơn xin sửa lịch bị từ chối';
+            notificationMessage = `Đơn xin sửa lịch ngày ${schedule.WorkDate} đã bị Admin từ chối. ${reason ? 'Lý do: ' + reason : 'Vui lòng liên hệ Admin để biết thêm chi tiết.'}`;
+            
+            // Đổi status về Approved và xóa Notes
+            await connection.query(
+                'UPDATE StaffSchedule SET Status = ?, Notes = NULL, UpdatedAt = NOW() WHERE ScheduleID = ?',
+                ['Approved', scheduleId]
             );
         } else {
             await connection.query(
@@ -1160,9 +1552,13 @@ router.put('/schedules/:id/reject', authenticateToken, checkAdminAccess, async (
         
         await connection.commit();
         
+        let successMessage = 'Từ chối lịch làm việc thành công';
+        if (isLeaveRequest) successMessage = 'Từ chối đơn xin nghỉ thành công';
+        if (isEditRequest) successMessage = 'Từ chối đơn xin sửa lịch thành công';
+        
         res.json({
             success: true,
-            message: isLeaveRequest ? 'Từ chối đơn xin nghỉ thành công' : 'Từ chối lịch làm việc thành công'
+            message: successMessage
         });
     } catch (err) {
         await connection.rollback();
@@ -1186,11 +1582,18 @@ router.put('/schedules/:id/reject', authenticateToken, checkAdminAccess, async (
  */
 router.get('/leave-requests/stats', authenticateToken, checkAdminAccess, async (req, res) => {
     try {
-        // Đếm số đơn chờ duyệt
-        const [pendingResult] = await pool.query(`
+        // Đếm số đơn xin nghỉ chờ duyệt
+        const [pendingLeaveResult] = await pool.query(`
             SELECT COUNT(*) as count 
             FROM StaffSchedule 
             WHERE Status = 'PendingLeave'
+        `);
+        
+        // Đếm số đơn xin sửa chờ duyệt
+        const [pendingEditResult] = await pool.query(`
+            SELECT COUNT(*) as count 
+            FROM StaffSchedule 
+            WHERE Status = 'PendingEdit'
         `);
         
         // Đếm số KTV nghỉ hôm nay
@@ -1206,7 +1609,9 @@ router.get('/leave-requests/stats', authenticateToken, checkAdminAccess, async (
         res.json({
             success: true,
             stats: {
-                pending: pendingResult[0].count,
+                pending: pendingLeaveResult[0].count + pendingEditResult[0].count,
+                pendingLeave: pendingLeaveResult[0].count,
+                pendingEdit: pendingEditResult[0].count,
                 todayLeave: todayLeaveResult[0].count
             }
         });
@@ -1220,7 +1625,7 @@ router.get('/leave-requests/stats', authenticateToken, checkAdminAccess, async (
 });
 
 /**
- * API: Lấy danh sách đơn xin nghỉ (Admin)
+ * API: Lấy danh sách đơn xin nghỉ + đơn xin sửa (Admin)
  * GET /api/mechanics/leave-requests
  */
 router.get('/leave-requests', authenticateToken, checkAdminAccess, async (req, res) => {
@@ -1235,16 +1640,28 @@ router.get('/leave-requests', authenticateToken, checkAdminAccess, async (req, r
             params.push(from, to);
         }
         
-        // Lấy đơn chờ duyệt
-        const [pending] = await pool.query(`
-            SELECT ss.*, u.FullName as MechanicName, u.PhoneNumber as Phone
+        // Lấy đơn xin nghỉ chờ duyệt
+        const [pendingLeave] = await pool.query(`
+            SELECT ss.*, u.FullName as MechanicName, u.PhoneNumber as Phone, 'leave' as RequestType
             FROM StaffSchedule ss
             JOIN Users u ON ss.MechanicID = u.UserID
             WHERE ss.Status = 'PendingLeave' ${dateCondition}
             ORDER BY ss.WorkDate ASC
         `, params);
         
-        // Lấy đơn đã duyệt
+        // Lấy đơn xin sửa chờ duyệt
+        const [pendingEdit] = await pool.query(`
+            SELECT ss.*, u.FullName as MechanicName, u.PhoneNumber as Phone, 'edit' as RequestType
+            FROM StaffSchedule ss
+            JOIN Users u ON ss.MechanicID = u.UserID
+            WHERE ss.Status = 'PendingEdit' ${dateCondition}
+            ORDER BY ss.WorkDate ASC
+        `, params);
+        
+        // Gộp tất cả đơn chờ duyệt
+        const pending = [...pendingLeave, ...pendingEdit];
+        
+        // Lấy đơn đã duyệt (nghỉ)
         const [approved] = await pool.query(`
             SELECT ss.*, u.FullName as MechanicName, u.PhoneNumber as Phone
             FROM StaffSchedule ss
