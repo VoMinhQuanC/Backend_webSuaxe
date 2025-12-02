@@ -1193,6 +1193,61 @@ router.get('/appointments', authenticateToken, checkMechanicAccess, async (req, 
 });
 
 /**
+ * API: Lấy chi tiết một lịch hẹn theo ID
+ * GET /api/mechanics/appointments/:id
+ */
+router.get('/appointments/:id', authenticateToken, checkMechanicAccess, async (req, res) => {
+    try {
+        const mechanicId = req.user.userId;
+        const appointmentId = req.params.id;
+        
+        // Lấy chi tiết lịch hẹn
+        const [appointments] = await pool.query(`
+            SELECT a.*, 
+                   u.FullName, u.Email, u.PhoneNumber,
+                   v.LicensePlate, v.Brand, v.Model, v.Year
+            FROM Appointments a
+            LEFT JOIN Users u ON a.UserID = u.UserID
+            LEFT JOIN Vehicles v ON a.VehicleID = v.VehicleID
+            WHERE a.AppointmentID = ? AND a.MechanicID = ? AND a.IsDeleted = 0
+        `, [appointmentId, mechanicId]);
+        
+        if (appointments.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Không tìm thấy lịch hẹn hoặc bạn không có quyền xem'
+            });
+        }
+        
+        const appointment = appointments[0];
+        
+        // Lấy danh sách dịch vụ của lịch hẹn
+        const [services] = await pool.query(`
+            SELECT s.ServiceID, s.ServiceName, s.Description, aps.Price, aps.Quantity
+            FROM AppointmentServices aps
+            JOIN Services s ON aps.ServiceID = s.ServiceID
+            WHERE aps.AppointmentID = ?
+        `, [appointmentId]);
+        
+        appointment.services = services;
+        
+        // Tính tổng tiền
+        appointment.totalAmount = services.reduce((sum, s) => sum + (s.Price * (s.Quantity || 1)), 0);
+        
+        res.json({
+            success: true,
+            appointment
+        });
+    } catch (err) {
+        console.error('Lỗi khi lấy chi tiết lịch hẹn:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server: ' + err.message
+        });
+    }
+});
+
+/**
  * API: Cập nhật trạng thái lịch hẹn
  * PUT /api/mechanics/appointments/:id/status
  */
