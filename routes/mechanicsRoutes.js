@@ -1223,7 +1223,7 @@ router.get('/appointments/:id', authenticateToken, checkMechanicAccess, async (r
         
         // Lấy danh sách dịch vụ của lịch hẹn
         const [services] = await pool.query(`
-            SELECT s.ServiceID, s.ServiceName, s.Description, aps.Price, aps.Quantity
+            SELECT s.ServiceID, s.ServiceName, s.Description, s.Price, aps.Quantity
             FROM AppointmentServices aps
             JOIN Services s ON aps.ServiceID = s.ServiceID
             WHERE aps.AppointmentID = ?
