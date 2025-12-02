@@ -1391,13 +1391,20 @@ router.put('/schedules/:id/approve', authenticateToken, checkAdminAccess, async 
             }
             
             if (editData) {
-                // Cập nhật lịch với thông tin mới
+                // Giữ lại Notes với flag approved để frontend nhận diện
+                const approvedNotes = JSON.stringify({
+                    editRequest: editData,
+                    approved: true,
+                    approvedAt: new Date().toISOString()
+                });
+                
+                // Cập nhật lịch với thông tin mới và Status = ApprovedEdit
                 await connection.query(
                     `UPDATE StaffSchedule 
                      SET WorkDate = ?, StartTime = ?, EndTime = ?, 
-                         Status = 'Approved', Notes = NULL, UpdatedAt = NOW()
+                         Status = 'ApprovedEdit', Notes = ?, UpdatedAt = NOW()
                      WHERE ScheduleID = ?`,
-                    [editData.newWorkDate, editData.newStartTime, editData.newEndTime, scheduleId]
+                    [editData.newWorkDate, editData.newStartTime, editData.newEndTime, approvedNotes, scheduleId]
                 );
                 
                 const oldDateStr = new Date(editData.originalWorkDate).toLocaleDateString('vi-VN');
@@ -1526,10 +1533,18 @@ router.put('/schedules/:id/reject', authenticateToken, checkAdminAccess, async (
             notificationTitle = 'Đơn xin sửa lịch bị từ chối';
             notificationMessage = `Đơn xin sửa lịch ngày ${schedule.WorkDate} đã bị Admin từ chối. ${reason ? 'Lý do: ' + reason : 'Vui lòng liên hệ Admin để biết thêm chi tiết.'}`;
             
-            // Đổi status về Approved và xóa Notes
+            // Giữ lại Notes với flag rejected
+            const rejectedNotes = JSON.stringify({
+                editRequest: editData,
+                rejected: true,
+                rejectedAt: new Date().toISOString(),
+                rejectedReason: reason || null
+            });
+            
+            // Đổi status thành RejectedEdit và giữ Notes
             await connection.query(
-                'UPDATE StaffSchedule SET Status = ?, Notes = NULL, UpdatedAt = NOW() WHERE ScheduleID = ?',
-                ['Approved', scheduleId]
+                'UPDATE StaffSchedule SET Status = ?, Notes = ?, UpdatedAt = NOW() WHERE ScheduleID = ?',
+                ['RejectedEdit', rejectedNotes, scheduleId]
             );
         } else {
             await connection.query(
@@ -1661,9 +1676,9 @@ router.get('/leave-requests', authenticateToken, checkAdminAccess, async (req, r
         // Gộp tất cả đơn chờ duyệt
         const pending = [...pendingLeave, ...pendingEdit];
         
-        // Lấy đơn đã duyệt (nghỉ)
-        const [approved] = await pool.query(`
-            SELECT ss.*, u.FullName as MechanicName, u.PhoneNumber as Phone
+        // Lấy đơn xin nghỉ đã duyệt
+        const [approvedLeave] = await pool.query(`
+            SELECT ss.*, u.FullName as MechanicName, u.PhoneNumber as Phone, 'leave' as RequestType
             FROM StaffSchedule ss
             JOIN Users u ON ss.MechanicID = u.UserID
             WHERE ss.Type = 'unavailable' 
@@ -1672,15 +1687,41 @@ router.get('/leave-requests', authenticateToken, checkAdminAccess, async (req, r
             ORDER BY ss.WorkDate DESC
         `, params);
         
-        // Lấy đơn đã từ chối
-        const [rejected] = await pool.query(`
-            SELECT ss.*, u.FullName as MechanicName, u.PhoneNumber as Phone
+        // Lấy đơn xin sửa đã duyệt
+        const [approvedEdit] = await pool.query(`
+            SELECT ss.*, u.FullName as MechanicName, u.PhoneNumber as Phone, 'edit' as RequestType
+            FROM StaffSchedule ss
+            JOIN Users u ON ss.MechanicID = u.UserID
+            WHERE ss.Status = 'ApprovedEdit'
+            ${dateCondition}
+            ORDER BY ss.WorkDate DESC
+        `, params);
+        
+        // Gộp tất cả đơn đã duyệt
+        const approved = [...approvedLeave, ...approvedEdit];
+        
+        // Lấy đơn xin nghỉ đã từ chối
+        const [rejectedLeave] = await pool.query(`
+            SELECT ss.*, u.FullName as MechanicName, u.PhoneNumber as Phone, 'leave' as RequestType
             FROM StaffSchedule ss
             JOIN Users u ON ss.MechanicID = u.UserID
             WHERE ss.Status = 'RejectedLeave'
             ${dateCondition}
             ORDER BY ss.WorkDate DESC
         `, params);
+        
+        // Lấy đơn xin sửa đã từ chối
+        const [rejectedEdit] = await pool.query(`
+            SELECT ss.*, u.FullName as MechanicName, u.PhoneNumber as Phone, 'edit' as RequestType
+            FROM StaffSchedule ss
+            JOIN Users u ON ss.MechanicID = u.UserID
+            WHERE ss.Status = 'RejectedEdit'
+            ${dateCondition}
+            ORDER BY ss.WorkDate DESC
+        `, params);
+        
+        // Gộp tất cả đơn đã từ chối
+        const rejected = [...rejectedLeave, ...rejectedEdit];
         
         res.json({
             success: true,
