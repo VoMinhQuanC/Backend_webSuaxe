@@ -696,8 +696,11 @@ router.put('/schedules/:id', authenticateToken, checkMechanicAccess, async (req,
         await connection.beginTransaction();
         
         const scheduleId = req.params.id;
-        const { startTime, endTime, type, notes, WorkDate, StartTime, EndTime, Type, IsAvailable } = req.body;
+        const { startTime, endTime, type, notes, Notes: notesUppercase, WorkDate, StartTime, EndTime, Type, IsAvailable, Status } = req.body;
         const mechanicId = req.user.userId;
+        
+        // Support cả notes và Notes (lowercase và uppercase)
+        const finalNotes = notesUppercase || notes;
         
         // Parse dữ liệu
         const isUnavailable = type === 'unavailable' || Type === 'unavailable' || IsAvailable === 0;
@@ -805,9 +808,12 @@ router.put('/schedules/:id', authenticateToken, checkMechanicAccess, async (req,
         }
         
         // Chuẩn bị dữ liệu update
-        let updateData = {
-            Notes: notes
-        };
+        let updateData = {};
+        
+        // Chỉ thêm Notes nếu có giá trị
+        if (finalNotes !== undefined) {
+            updateData.Notes = finalNotes;
+        }
         
         // Xử lý 2 formats: ISO datetime hoặc HH:MM
         if (startTime && endTime) {
@@ -831,6 +837,9 @@ router.put('/schedules/:id', authenticateToken, checkMechanicAccess, async (req,
         }
         if (IsAvailable !== undefined) {
             updateData.IsAvailable = IsAvailable;
+        }
+        if (Status !== undefined) {
+            updateData.Status = Status;
         }
         
         // Build UPDATE query
@@ -1223,7 +1232,7 @@ router.get('/appointments/:id', authenticateToken, checkMechanicAccess, async (r
         
         // Lấy danh sách dịch vụ của lịch hẹn
         const [services] = await pool.query(`
-            SELECT s.ServiceID, s.ServiceName, s.Description, s.Price, aps.Quantity
+            SELECT s.ServiceID, s.ServiceName, s.Description, aps.Price, aps.Quantity
             FROM AppointmentServices aps
             JOIN Services s ON aps.ServiceID = s.ServiceID
             WHERE aps.AppointmentID = ?
