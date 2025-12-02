@@ -17,11 +17,14 @@ router.get('/available-slots', async (req, res) => {
     const { date } = req.query;
     if (!date) return res.status(400).json({ success: false, message: 'Thiếu ngày cần kiểm tra' });
 
+    // Chỉ lấy lịch làm việc, không lấy lịch nghỉ
     const [rows] = await pool.query(
       `SELECT s.ScheduleID, s.MechanicID, u.FullName AS MechanicName, s.WorkDate, s.StartTime, s.EndTime
        FROM StaffSchedule s
        JOIN Users u ON s.MechanicID = u.UserID
        WHERE s.WorkDate = ? 
+       AND (s.Status IS NULL OR s.Status NOT IN ('ApprovedLeave', 'PendingLeave', 'RejectedLeave'))
+       AND (s.Type IS NULL OR s.Type != 'unavailable')
        ORDER BY s.StartTime`,
       [date]
     );
@@ -66,6 +69,7 @@ router.get('/', async (req, res) => {
 router.get('/by-date-range/:startDate/:endDate', async (req, res) => {
   try {
     const { startDate, endDate } = req.params;
+    const { includeLeave } = req.query; // Thêm param để include lịch nghỉ nếu cần
     
     // Kiểm tra tham số đầu vào
     if (!startDate || !endDate) {
@@ -76,13 +80,23 @@ router.get('/by-date-range/:startDate/:endDate', async (req, res) => {
     }
     
     // Lấy lịch trình trong khoảng thời gian
-    const [schedules] = await pool.query(`
+    // Mặc định: LỌC BỎ lịch nghỉ đã duyệt (ApprovedLeave, PendingLeave)
+    let query = `
       SELECT s.*, u.FullName AS MechanicName
       FROM StaffSchedule s
       LEFT JOIN Users u ON s.MechanicID = u.UserID
       WHERE s.WorkDate BETWEEN ? AND ?
-      ORDER BY s.WorkDate ASC, s.StartTime ASC
-    `, [startDate, endDate]);
+    `;
+    
+    // Nếu không yêu cầu include lịch nghỉ, thêm filter
+    if (includeLeave !== 'true') {
+      query += ` AND (s.Status IS NULL OR s.Status NOT IN ('ApprovedLeave', 'PendingLeave', 'RejectedLeave'))`;
+      query += ` AND (s.Type IS NULL OR s.Type != 'unavailable')`;
+    }
+    
+    query += ` ORDER BY s.WorkDate ASC, s.StartTime ASC`;
+    
+    const [schedules] = await pool.query(query, [startDate, endDate]);
     
     res.json({
       success: true,
@@ -102,6 +116,7 @@ router.get('/by-date/:date', async (req, res) => {
   try {
     const { date } = req.params;
     const mechanicId = req.query.mechanicId;
+    const includeLeave = req.query.includeLeave;
     
     // Kiểm tra tham số đầu vào
     if (!date) {
@@ -124,6 +139,12 @@ router.get('/by-date/:date', async (req, res) => {
     if (mechanicId) {
       query += ' AND s.MechanicID = ?';
       queryParams.push(mechanicId);
+    }
+    
+    // Lọc bỏ lịch nghỉ (mặc định)
+    if (includeLeave !== 'true') {
+      query += ` AND (s.Status IS NULL OR s.Status NOT IN ('ApprovedLeave', 'PendingLeave', 'RejectedLeave'))`;
+      query += ` AND (s.Type IS NULL OR s.Type != 'unavailable')`;
     }
     
     query += ' ORDER BY s.StartTime ASC';
