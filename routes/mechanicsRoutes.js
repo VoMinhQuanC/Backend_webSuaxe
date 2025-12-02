@@ -854,36 +854,40 @@ router.put('/schedules/:id', authenticateToken, checkMechanicAccess, async (req,
         // Nếu là đăng ký nghỉ, gửi notification cho admin
         if (Type === 'unavailable' || IsAvailable === 0) {
             const [mechanicInfo] = await connection.query(
-                'SELECT FullName, Phone FROM Users WHERE UserID = ?',
+                'SELECT FullName, PhoneNumber FROM Users WHERE UserID = ?',
                 [mechanicId]
             );
             
-            const dateStr = new Date(updateData.WorkDate).toLocaleDateString('vi-VN', {
-                weekday: 'long',
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric'
-            });
-            
-            const [adminUsers] = await connection.query(
-                'SELECT UserID FROM Users WHERE RoleID = 1'
-            );
-            
-            for (const admin of adminUsers) {
-                await connection.query(
-                    'INSERT INTO Notifications (UserID, Title, Message, Type, ReferenceID, IsRead) VALUES (?, ?, ?, ?, ?, ?)',
-                    [
-                        admin.UserID,
-                        '🔴 Đơn xin nghỉ từ kỹ thuật viên',
-                        `${mechanicInfo[0].FullName} (${mechanicInfo[0].Phone}) đã đăng ký nghỉ vào ${dateStr}.\n\nLý do: ${notes}`,
-                        'leave_request',
-                        scheduleId,
-                        0
-                    ]
+            if (mechanicInfo.length > 0) {
+                // Lấy WorkDate từ schedule hiện tại nếu updateData.WorkDate không có
+                const scheduleWorkDate = updateData.WorkDate || scheduleCheck[0].WorkDate;
+                const dateStr = new Date(scheduleWorkDate).toLocaleDateString('vi-VN', {
+                    weekday: 'long',
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric'
+                });
+                
+                const [adminUsers] = await connection.query(
+                    'SELECT UserID FROM Users WHERE RoleID = 1'
                 );
+                
+                for (const admin of adminUsers) {
+                    await connection.query(
+                        'INSERT INTO Notifications (UserID, Title, Message, Type, ReferenceID, IsRead) VALUES (?, ?, ?, ?, ?, ?)',
+                        [
+                            admin.UserID,
+                            '🔴 Đơn xin nghỉ từ kỹ thuật viên',
+                            `${mechanicInfo[0].FullName} (${mechanicInfo[0].PhoneNumber || 'N/A'}) đã đăng ký nghỉ vào ${dateStr}.\n\nLý do: ${finalNotes || 'Không có lý do'}`,
+                            'leave_request',
+                            scheduleId,
+                            0
+                        ]
+                    );
+                }
+                
+                console.log(`✅ Đã gửi thông báo đơn xin nghỉ từ ${mechanicInfo[0].FullName} cho ${adminUsers.length} admin(s)`);
             }
-            
-            console.log(`✅ Đã gửi thông báo đơn xin nghỉ từ ${mechanicInfo[0].FullName} cho ${adminUsers.length} admin(s)`);
         }
         
         await connection.commit();
