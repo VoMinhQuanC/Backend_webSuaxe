@@ -61,6 +61,145 @@ const uploadAvatar = multer({
     }
 });
 
+
+/**
+ * API: Lấy thông tin hồ sơ cá nhân
+ * Method: GET
+ * Endpoint: /users/profile
+ */
+router.get('/profile', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.userId;
+        
+        console.log('📋 Getting profile for userId:', userId);
+        
+        // Lấy thông tin người dùng từ database
+        const [users] = await pool.query(
+            `SELECT 
+                UserID, 
+                FullName, 
+                Email, 
+                PhoneNumber, 
+                RoleID, 
+                AvatarUrl,
+                Status,
+                CreatedAt
+            FROM Users 
+            WHERE UserID = ?`,
+            [userId]
+        );
+        
+        if (users.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Không tìm thấy người dùng'
+            });
+        }
+        
+        const user = users[0];
+        
+        console.log('✅ Found user:', user.FullName);
+        
+        res.json({
+            success: true,
+            user: {
+                userId: user.UserID,
+                fullName: user.FullName,
+                email: user.Email,
+                phoneNumber: user.PhoneNumber,
+                roleId: user.RoleID,
+                avatarUrl: user.AvatarUrl,
+                status: user.Status,
+                createdAt: user.CreatedAt
+            }
+        });
+    } catch (err) {
+        console.error('❌ Error getting profile:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server: ' + err.message
+        });
+    }
+});
+
+/**
+ * API: Lấy thống kê công việc của kỹ thuật viên
+ * Method: GET
+ * Endpoint: /users/stats (hoặc /mechanics/stats)
+ */
+router.get('/stats', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.userId;
+        const roleId = req.user.role;
+        
+        console.log('📊 Getting stats for userId:', userId, 'role:', roleId);
+        
+        // Chỉ cho phép kỹ thuật viên (RoleID = 3) xem stats
+        if (roleId !== 3) {
+            return res.status(403).json({
+                success: false,
+                message: 'Chỉ kỹ thuật viên mới có thể xem thống kê'
+            });
+        }
+        
+        // Query tổng số công việc
+        const [totalJobsResult] = await pool.query(
+            `SELECT COUNT(*) as count 
+             FROM Appointments 
+             WHERE MechanicID = ?`,
+            [userId]
+        );
+        
+        // Query số công việc đã hoàn thành
+        const [completedJobsResult] = await pool.query(
+            `SELECT COUNT(*) as count 
+             FROM Appointments 
+             WHERE MechanicID = ? 
+             AND Status = 'Completed'`,
+            [userId]
+        );
+        
+        // Query đánh giá trung bình (nếu có table Reviews)
+        // Tạm thời mock rating = 4.8
+        let averageRating = 4.8;
+        
+        try {
+            const [ratingResult] = await pool.query(
+                `SELECT AVG(Rating) as avgRating 
+                 FROM Reviews 
+                 WHERE MechanicID = ?`,
+                [userId]
+            );
+            
+            if (ratingResult[0] && ratingResult[0].avgRating !== null) {
+                averageRating = parseFloat(ratingResult[0].avgRating).toFixed(1);
+            }
+        } catch (err) {
+            console.log('⚠️ Reviews table not found, using mock rating');
+        }
+        
+        const stats = {
+            totalJobs: totalJobsResult[0].count,
+            completedJobs: completedJobsResult[0].count,
+            rating: parseFloat(averageRating)
+        };
+        
+        console.log('✅ Stats:', stats);
+        
+        res.json({
+            success: true,
+            stats: stats
+        });
+    } catch (err) {
+        console.error('❌ Error getting stats:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server: ' + err.message
+        });
+    }
+});
+
+
 /**
  * API: Cập nhật thông tin hồ sơ cá nhân
  * Method: PUT
