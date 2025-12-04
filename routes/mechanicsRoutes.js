@@ -1142,13 +1142,13 @@ router.put('/schedules/:id', authenticateToken, checkMechanicAccess, async (req,
                 
                 // Nếu có editRequest hoặc type = 'edit' → Set Pending
                 if (notesJson.type === 'edit' || notesJson.editRequest) {
-                    updateData.Status = 'Pending';
-                    console.log('✅ Phát hiện editRequest → Set Status = Pending');
+                    updateData.Status = 'PendingEdit';
+                    console.log('✅ Phát hiện editRequest → Set Status = PendingEdit');
                 }
                 // Nếu type = 'leave' → Set Pending
                 else if (notesJson.type === 'leave') {
-                    updateData.Status = 'Pending';
-                    console.log('✅ Phát hiện leave request → Set Status = Pending');
+                    updateData.Status = 'PendingLeave';
+                    console.log('✅ Phát hiện leave request → Set Status = PendingLeave');
                 }
             } catch (e) {
                 // Không phải JSON, bỏ qua
