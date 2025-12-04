@@ -829,7 +829,7 @@ router.post('/schedules', authenticateToken, checkMechanicAccess, async (req, re
         }
         
         // ===== THÊM VALIDATION 2: Số lượng KTV (max 6) =====
-        const workDate = WorkDate || (validationStartTime ? new Date(validationStartTime).toISOString().split('T')[0] : null);
+        const workDate = WorkDate || (startTime ? new Date(startTime).toISOString().split('T')[0] : null);
         if (workDate && !isUnavailable) {
             const [countResult] = await connection.query(
                 `SELECT COUNT(DISTINCT MechanicID) as mechanicCount
@@ -850,8 +850,8 @@ router.post('/schedules', authenticateToken, checkMechanicAccess, async (req, re
         }
         
         // ===== THÊM VALIDATION 3: Overlap 4 tiếng =====
-        if (!isUnavailable && validationStartTime && validationEndTime && workDate) {
-            const requestStart = new Date(validationStartTime);
+        if (!isUnavailable && startTime && endTime && workDate) {
+            const requestStart = new Date(startTime);
             const fourHoursBefore = new Date(requestStart.getTime() - 4 * 60 * 60 * 1000);
             const fourHoursAfter = new Date(requestStart.getTime() + 4 * 60 * 60 * 1000);
             
@@ -891,37 +891,29 @@ router.post('/schedules', authenticateToken, checkMechanicAccess, async (req, re
         }
         // ===== KẾT THÚC VALIDATION MỚI =====
         
-        // Parse datetime từ WorkDate + StartTime + EndTime (nếu có) hoặc từ validationStartTime/validationEndTime
-        let scheduleWorkDate, startTimeOnly, endTimeOnly;
-
-        if (WorkDate && StartTime && EndTime) {
-            // ✅ Dùng giá trị đã có sẵn từ Flutter (đã đúng format)
-            scheduleWorkDate = WorkDate;
-            startTimeOnly = StartTime;
-            endTimeOnly = EndTime;
-        } else if (validationStartTime && validationEndTime) {
-            // ✅ Parse từ ISO datetime
-            const startDate = new Date(validationStartTime);
-            const endDate = new Date(validationEndTime);
-            
-            scheduleWorkDate = startDate.toISOString().split('T')[0];
-            startTimeOnly = startDate.toTimeString().split(' ')[0];
-            endTimeOnly = endDate.toTimeString().split(' ')[0];
-            
-            // Kiểm tra thời gian hợp lệ
-            if (startDate >= endDate) {
-                await connection.rollback();
-                return res.status(400).json({
-                    success: false,
-                    message: 'Thời gian kết thúc phải sau thời gian bắt đầu'
-                });
-            }
-        } else {
-            // ❌ Không có dữ liệu
+        // Kiểm tra dữ liệu đầu vào (code gốc)
+        if (!startTime || !endTime) {
             await connection.rollback();
             return res.status(400).json({
                 success: false,
                 message: 'Vui lòng cung cấp đầy đủ thời gian bắt đầu và kết thúc'
+            });
+        }
+        
+        // Parse datetime để lấy WorkDate, StartTime, EndTime
+        const startDate = new Date(startTime);
+        const endDate = new Date(endTime);
+        
+        const scheduleWorkDate = startDate.toISOString().split('T')[0];
+        const startTimeOnly = startDate.toTimeString().split(' ')[0];
+        const endTimeOnly = endDate.toTimeString().split(' ')[0];
+        
+        // Kiểm tra thời gian hợp lệ
+        if (startDate >= endDate) {
+            await connection.rollback();
+            return res.status(400).json({
+                success: false,
+                message: 'Thời gian kết thúc phải sau thời gian bắt đầu'
             });
         }
         
@@ -946,7 +938,7 @@ router.post('/schedules', authenticateToken, checkMechanicAccess, async (req, re
         const [result] = await connection.query(
             `INSERT INTO StaffSchedule (MechanicID, WorkDate, StartTime, EndTime, Type, Status, Notes, IsAvailable) 
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [mechanicId, scheduleWorkDate, startTimeOnly, endTimeOnly, type || 'available', isUnavailable ? 'Pending' : 'Approved', notes || null, isUnavailable ? 0 : 1]
+            [mechanicId, scheduleWorkDate, startTimeOnly, endTimeOnly, type || 'available', 'Pending', notes || null, 1]
         );
         
         const scheduleId = result.insertId;
@@ -1000,7 +992,7 @@ router.put('/schedules/:id', authenticateToken, checkMechanicAccess, async (req,
         await connection.beginTransaction();
         
         const scheduleId = req.params.id;
-        const { validationStartTime, validationEndTime, type, notes, Notes: notesUppercase, WorkDate, StartTime, EndTime, Type, IsAvailable, Status } = req.body;
+        const { startTime, endTime, type, notes, Notes: notesUppercase, WorkDate, StartTime, EndTime, Type, IsAvailable, Status } = req.body;
         const mechanicId = req.user.userId;
         
         // Support cả notes và Notes (lowercase và uppercase)
@@ -1008,12 +1000,12 @@ router.put('/schedules/:id', authenticateToken, checkMechanicAccess, async (req,
         
         // Parse dữ liệu
         const isUnavailable = type === 'unavailable' || Type === 'unavailable' || IsAvailable === 0;
-        const workDate = WorkDate || (validationStartTime ? new Date(validationStartTime).toISOString().split('T')[0] : null);
+        const workDate = WorkDate || (startTime ? new Date(startTime).toISOString().split('T')[0] : null);
         
         // ===== THÊM VALIDATION 1: Thời gian tối thiểu 4 tiếng =====
-        if (!isUnavailable && validationStartTime && validationEndTime) {
-            const startDateTime = new Date(validationStartTime);
-            const endDateTime = new Date(validationEndTime);
+        if (!isUnavailable && startTime && endTime) {
+            const startDateTime = new Date(startTime);
+            const endDateTime = new Date(endTime);
             const hoursDiff = (endDateTime - startDateTime) / (1000 * 60 * 60);
             
             if (hoursDiff < 4) {
@@ -1054,8 +1046,8 @@ router.put('/schedules/:id', authenticateToken, checkMechanicAccess, async (req,
         }
         
         // ===== THÊM VALIDATION 3: Overlap 4 tiếng =====
-        if (!isUnavailable && validationStartTime && validationEndTime && workDate) {
-            const requestStart = new Date(validationStartTime);
+        if (!isUnavailable && startTime && endTime && workDate) {
+            const requestStart = new Date(startTime);
             const fourHoursBefore = new Date(requestStart.getTime() - 4 * 60 * 60 * 1000);
             const fourHoursAfter = new Date(requestStart.getTime() + 4 * 60 * 60 * 1000);
             
@@ -1140,20 +1132,43 @@ router.put('/schedules/:id', authenticateToken, checkMechanicAccess, async (req,
         // Chuẩn bị dữ liệu update
         let updateData = {};
         
-        // Chỉ thêm Notes nếu có giá trị
+        // ✅ Chỉ thêm Notes nếu có giá trị + Kiểm tra editRequest
         if (finalNotes !== undefined) {
             updateData.Notes = finalNotes;
+            
+            // Parse JSON để kiểm tra có editRequest/leave request
+            try {
+                const notesJson = JSON.parse(finalNotes);
+                
+                // Nếu có editRequest hoặc type = 'edit' → Set Pending
+                if (notesJson.type === 'edit' || notesJson.editRequest) {
+                    updateData.Status = 'Pending';
+                    console.log('✅ Phát hiện editRequest → Set Status = Pending');
+                }
+                // Nếu type = 'leave' → Set Pending
+                else if (notesJson.type === 'leave') {
+                    updateData.Status = 'Pending';
+                    console.log('✅ Phát hiện leave request → Set Status = Pending');
+                }
+            } catch (e) {
+                // Không phải JSON, bỏ qua
+            }
         }
         
-        // ✅ Sử dụng WorkDate + StartTime + EndTime từ Flutter (đã đúng format)
-        if (WorkDate !== undefined) {
-            updateData.WorkDate = WorkDate;
-        }
-        if (StartTime !== undefined) {
-            updateData.StartTime = StartTime;  // Đã là HH:mm:ss format từ Flutter
-        }
-        if (EndTime !== undefined) {
-            updateData.EndTime = EndTime;      // Đã là HH:mm:ss format từ Flutter
+        // Xử lý 2 formats: ISO datetime hoặc HH:MM
+        if (startTime && endTime) {
+            // Format 1: ISO datetime (startTime/endTime)
+            if (startTime.includes('T')) {
+                updateData.StartTime = startTime;
+                updateData.EndTime = endTime;
+                updateData.WorkDate = new Date(startTime).toISOString().split('T')[0];
+            } 
+            // Format 2: HH:MM (StartTime/EndTime)
+            else {
+                updateData.WorkDate = WorkDate;
+                updateData.StartTime = new Date(`${WorkDate}T${startTime}`).toISOString();
+                updateData.EndTime = new Date(`${WorkDate}T${endTime}`).toISOString();
+            }
         }
         
         // Cập nhật Type và IsAvailable
@@ -1176,15 +1191,32 @@ router.put('/schedules/:id', authenticateToken, checkMechanicAccess, async (req,
             updateValues
         );
         
-        // Nếu là đăng ký nghỉ, gửi notification cho admin
-        if (Type === 'unavailable' || IsAvailable === 0) {
+        // Gửi notification cho admin
+        // Kiểm tra xem có editRequest hay leave request không
+        let hasRequest = false;
+        let requestType = '';
+        
+        try {
+            if (finalNotes) {
+                const notesJson = JSON.parse(finalNotes);
+                if (notesJson.type === 'edit' || notesJson.editRequest) {
+                    hasRequest = true;
+                    requestType = 'edit';
+                } else if (notesJson.type === 'leave') {
+                    hasRequest = true;
+                    requestType = 'leave';
+                }
+            }
+        } catch (e) {}
+        
+        // Nếu có request (edit hoặc leave) → Gửi notification
+        if (hasRequest || Type === 'unavailable' || IsAvailable === 0) {
             const [mechanicInfo] = await connection.query(
                 'SELECT FullName, PhoneNumber FROM Users WHERE UserID = ?',
                 [mechanicId]
             );
             
             if (mechanicInfo.length > 0) {
-                // Lấy WorkDate từ schedule hiện tại nếu updateData.WorkDate không có
                 const scheduleWorkDate = updateData.WorkDate || scheduleCheck[0].WorkDate;
                 const dateStr = new Date(scheduleWorkDate).toLocaleDateString('vi-VN', {
                     weekday: 'long',
@@ -1197,21 +1229,49 @@ router.put('/schedules/:id', authenticateToken, checkMechanicAccess, async (req,
                     'SELECT UserID FROM Users WHERE RoleID = 1'
                 );
                 
+                let notifTitle, notifMessage, notifType;
+                
+                if (requestType === 'edit') {
+                    // Đơn xin sửa lịch
+                    try {
+                        const notesJson = JSON.parse(finalNotes);
+                        const editReq = notesJson.editRequest;
+                        if (editReq) {
+                            const newDate = new Date(editReq.newWorkDate).toLocaleDateString('vi-VN');
+                            notifTitle = '🔵 Đơn xin sửa lịch từ kỹ thuật viên';
+                            notifMessage = `${mechanicInfo[0].FullName} (${mechanicInfo[0].PhoneNumber || 'N/A'}) xin đổi lịch:\n\n` +
+                                `Từ: ${dateStr} (${scheduleCheck[0].StartTime} - ${scheduleCheck[0].EndTime})\n` +
+                                `Sang: ${newDate} (${editReq.newStartTime} - ${editReq.newEndTime})\n\n` +
+                                `Lý do: ${editReq.reason || 'Không có'}`;
+                            notifType = 'schedule_edit_request';
+                        }
+                    } catch (e) {
+                        notifTitle = '🔵 Đơn xin sửa lịch từ kỹ thuật viên';
+                        notifMessage = `${mechanicInfo[0].FullName} đã gửi đơn xin sửa lịch.`;
+                        notifType = 'schedule_edit_request';
+                    }
+                } else {
+                    // Đơn xin nghỉ
+                    notifTitle = '🔴 Đơn xin nghỉ từ kỹ thuật viên';
+                    notifMessage = `${mechanicInfo[0].FullName} (${mechanicInfo[0].PhoneNumber || 'N/A'}) đã đăng ký nghỉ vào ${dateStr}.\n\nLý do: ${finalNotes || 'Không có lý do'}`;
+                    notifType = 'leave_request';
+                }
+                
                 for (const admin of adminUsers) {
                     await connection.query(
                         'INSERT INTO Notifications (UserID, Title, Message, Type, ReferenceID, IsRead) VALUES (?, ?, ?, ?, ?, ?)',
                         [
                             admin.UserID,
-                            '🔴 Đơn xin nghỉ từ kỹ thuật viên',
-                            `${mechanicInfo[0].FullName} (${mechanicInfo[0].PhoneNumber || 'N/A'}) đã đăng ký nghỉ vào ${dateStr}.\n\nLý do: ${finalNotes || 'Không có lý do'}`,
-                            'leave_request',
+                            notifTitle,
+                            notifMessage,
+                            notifType,
                             scheduleId,
                             0
                         ]
                     );
                 }
                 
-                console.log(`✅ Đã gửi thông báo đơn xin nghỉ từ ${mechanicInfo[0].FullName} cho ${adminUsers.length} admin(s)`);
+                console.log(`✅ Đã gửi thông báo ${requestType === 'edit' ? 'xin sửa lịch' : 'xin nghỉ'} từ ${mechanicInfo[0].FullName} cho ${adminUsers.length} admin(s)`);
             }
         }
         
