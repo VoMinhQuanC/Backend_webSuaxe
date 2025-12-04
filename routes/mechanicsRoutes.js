@@ -2272,6 +2272,408 @@ router.get('/schedules/team/mechanics-list', authenticateToken, async (req, res)
     }
 });
 
+/**
+ * API: Lấy danh sách lịch hẹn của kỹ thuật viên
+ * Method: GET
+ * Endpoint: /api/mechanics/appointments
+ */
+router.get('/appointments', authenticateToken, async (req, res) => {
+    try {
+        const mechanicId = req.user.userId;
+        const roleId = req.user.role;
+        
+        console.log('📋 Getting appointments for mechanicId:', mechanicId);
+        
+        // Chỉ cho phép mechanic (RoleID = 3) xem lịch hẹn của mình
+        if (roleId !== 3) {
+            return res.status(403).json({
+                success: false,
+                message: 'Chỉ kỹ thuật viên mới có thể xem lịch hẹn'
+            });
+        }
+        
+        // Lấy filter từ query
+        const { status, dateFrom, dateTo } = req.query;
+        
+        // Build query
+        let query = `
+            SELECT 
+                a.AppointmentID,
+                a.UserID,
+                a.VehicleID,
+                a.MechanicID,
+                a.AppointmentDate,
+                a.EstimatedEndTime,
+                a.ServiceDuration,
+                a.Status,
+                a.PaymentStatus,
+                a.TotalAmount,
+                a.PaymentMethod,
+                a.Notes,
+                a.CreatedAt,
+                a.UpdatedAt,
+                u.FullName as CustomerName,
+                u.PhoneNumber as CustomerPhone,
+                v.LicensePlate,
+                v.Brand,
+                v.Model,
+                v.Year
+            FROM Appointments a
+            INNER JOIN Users u ON a.UserID = u.UserID
+            LEFT JOIN Vehicles v ON a.VehicleID = v.VehicleID
+            WHERE a.MechanicID = ?
+        `;
+        
+        const params = [mechanicId];
+        
+        // Thêm filter status
+        if (status) {
+            query += ` AND a.Status = ?`;
+            params.push(status);
+        }
+        
+        // Thêm filter date range
+        if (dateFrom) {
+            query += ` AND DATE(a.AppointmentDate) >= ?`;
+            params.push(dateFrom);
+        }
+        
+        if (dateTo) {
+            query += ` AND DATE(a.AppointmentDate) <= ?`;
+            params.push(dateTo);
+        }
+        
+        query += ` ORDER BY a.AppointmentDate DESC`;
+        
+        const [appointments] = await pool.query(query, params);
+        
+        // Lấy services cho mỗi appointment
+        for (let appointment of appointments) {
+            const [services] = await pool.query(
+                `SELECT 
+                    s.ServiceID,
+                    s.ServiceName,
+                    s.Price,
+                    s.EstimatedTime,
+                    aps.Quantity
+                FROM AppointmentServices aps
+                INNER JOIN Services s ON aps.ServiceID = s.ServiceID
+                WHERE aps.AppointmentID = ?`,
+                [appointment.AppointmentID]
+            );
+            
+            appointment.Services = services;
+        }
+        
+        console.log(`✅ Found ${appointments.length} appointments`);
+        
+        res.json({
+            success: true,
+            appointments: appointments
+        });
+    } catch (err) {
+        console.error('❌ Error getting appointments:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server: ' + err.message
+        });
+    }
+});
+
+/**
+ * API: Lấy chi tiết lịch hẹn
+ * Method: GET
+ * Endpoint: /api/mechanics/appointments/:id
+ */
+router.get('/appointments/:id', authenticateToken, async (req, res) => {
+    try {
+        const mechanicId = req.user.userId;
+        const roleId = req.user.role;
+        const appointmentId = req.params.id;
+        
+        console.log('📋 Getting appointment detail:', appointmentId);
+        
+        // Chỉ cho phép mechanic xem lịch hẹn của mình
+        if (roleId !== 3) {
+            return res.status(403).json({
+                success: false,
+                message: 'Không có quyền xem lịch hẹn này'
+            });
+        }
+        
+        // Lấy thông tin appointment
+        const [appointments] = await pool.query(
+            `SELECT 
+                a.*,
+                u.FullName as CustomerName,
+                u.PhoneNumber as CustomerPhone,
+                u.Email as CustomerEmail,
+                v.LicensePlate,
+                v.Brand,
+                v.Model,
+                v.Year
+            FROM Appointments a
+            INNER JOIN Users u ON a.UserID = u.UserID
+            LEFT JOIN Vehicles v ON a.VehicleID = v.VehicleID
+            WHERE a.AppointmentID = ? AND a.MechanicID = ?`,
+            [appointmentId, mechanicId]
+        );
+        
+        if (appointments.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Không tìm thấy lịch hẹn'
+            });
+        }
+        
+        const appointment = appointments[0];
+        
+        // Lấy danh sách dịch vụ
+        const [services] = await pool.query(
+            `SELECT 
+                s.ServiceID,
+                s.ServiceName,
+                s.Description,
+                s.Price,
+                s.EstimatedTime,
+                aps.Quantity
+            FROM AppointmentServices aps
+            INNER JOIN Services s ON aps.ServiceID = s.ServiceID
+            WHERE aps.AppointmentID = ?`,
+            [appointmentId]
+        );
+        
+        appointment.Services = services;
+        
+        console.log('✅ Appointment detail loaded');
+        
+        res.json({
+            success: true,
+            appointment: appointment
+        });
+    } catch (err) {
+        console.error('❌ Error getting appointment detail:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server: ' + err.message
+        });
+    }
+});
+
+/**
+ * API: Xác nhận lịch hẹn
+ * Method: PUT
+ * Endpoint: /api/mechanics/appointments/:id/confirm
+ */
+router.put('/appointments/:id/confirm', authenticateToken, async (req, res) => {
+    try {
+        const mechanicId = req.user.userId;
+        const roleId = req.user.role;
+        const appointmentId = req.params.id;
+        
+        console.log('✅ Confirming appointment:', appointmentId);
+        
+        // Chỉ cho phép mechanic
+        if (roleId !== 3) {
+            return res.status(403).json({
+                success: false,
+                message: 'Không có quyền xác nhận lịch hẹn'
+            });
+        }
+        
+        // Kiểm tra appointment thuộc về mechanic này
+        const [appointments] = await pool.query(
+            'SELECT * FROM Appointments WHERE AppointmentID = ? AND MechanicID = ?',
+            [appointmentId, mechanicId]
+        );
+        
+        if (appointments.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Không tìm thấy lịch hẹn'
+            });
+        }
+        
+        const appointment = appointments[0];
+        
+        // Kiểm tra status hiện tại
+        if (appointment.Status !== 'Pending') {
+            return res.status(400).json({
+                success: false,
+                message: `Không thể xác nhận lịch hẹn có trạng thái ${appointment.Status}`
+            });
+        }
+        
+        // Cập nhật status
+        await pool.query(
+            'UPDATE Appointments SET Status = ?, UpdatedAt = NOW() WHERE AppointmentID = ?',
+            ['Confirmed', appointmentId]
+        );
+        
+        console.log('✅ Appointment confirmed');
+        
+        res.json({
+            success: true,
+            message: 'Đã xác nhận lịch hẹn thành công'
+        });
+    } catch (err) {
+        console.error('❌ Error confirming appointment:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server: ' + err.message
+        });
+    }
+});
+
+/**
+ * API: Hoàn thành công việc
+ * Method: PUT
+ * Endpoint: /api/mechanics/appointments/:id/complete
+ */
+router.put('/appointments/:id/complete', authenticateToken, async (req, res) => {
+    try {
+        const mechanicId = req.user.userId;
+        const roleId = req.user.role;
+        const appointmentId = req.params.id;
+        const { notes } = req.body; // Optional completion notes
+        
+        console.log('✅ Completing appointment:', appointmentId);
+        
+        // Chỉ cho phép mechanic
+        if (roleId !== 3) {
+            return res.status(403).json({
+                success: false,
+                message: 'Không có quyền hoàn thành lịch hẹn'
+            });
+        }
+        
+        // Kiểm tra appointment thuộc về mechanic này
+        const [appointments] = await pool.query(
+            'SELECT * FROM Appointments WHERE AppointmentID = ? AND MechanicID = ?',
+            [appointmentId, mechanicId]
+        );
+        
+        if (appointments.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Không tìm thấy lịch hẹn'
+            });
+        }
+        
+        const appointment = appointments[0];
+        
+        // Kiểm tra status hiện tại
+        if (appointment.Status !== 'Confirmed') {
+            return res.status(400).json({
+                success: false,
+                message: `Chỉ có thể hoàn thành lịch hẹn đã xác nhận. Trạng thái hiện tại: ${appointment.Status}`
+            });
+        }
+        
+        // Cập nhật status và notes nếu có
+        let query = 'UPDATE Appointments SET Status = ?, UpdatedAt = NOW()';
+        const params = ['Completed'];
+        
+        if (notes) {
+            query += ', Notes = ?';
+            params.push(notes);
+        }
+        
+        query += ' WHERE AppointmentID = ?';
+        params.push(appointmentId);
+        
+        await pool.query(query, params);
+        
+        console.log('✅ Appointment completed');
+        
+        res.json({
+            success: true,
+            message: 'Đã hoàn thành công việc thành công'
+        });
+    } catch (err) {
+        console.error('❌ Error completing appointment:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server: ' + err.message
+        });
+    }
+});
+
+/**
+ * API: Thống kê lịch hẹn của mechanic
+ * Method: GET
+ * Endpoint: /api/mechanics/appointments/stats
+ */
+router.get('/appointments-stats', authenticateToken, async (req, res) => {
+    try {
+        const mechanicId = req.user.userId;
+        const roleId = req.user.role;
+        
+        console.log('📊 Getting appointment stats for mechanic:', mechanicId);
+        
+        // Chỉ cho phép mechanic
+        if (roleId !== 3) {
+            return res.status(403).json({
+                success: false,
+                message: 'Chỉ kỹ thuật viên mới có thể xem thống kê'
+            });
+        }
+        
+        // Thống kê theo status
+        const [stats] = await pool.query(
+            `SELECT 
+                Status,
+                COUNT(*) as count
+            FROM Appointments
+            WHERE MechanicID = ?
+            GROUP BY Status`,
+            [mechanicId]
+        );
+        
+        // Convert to object
+        const statsObj = {
+            pending: 0,
+            confirmed: 0,
+            completed: 0,
+            canceled: 0
+        };
+        
+        stats.forEach(stat => {
+            const status = stat.Status.toLowerCase();
+            if (status === 'pending') statsObj.pending = stat.count;
+            else if (status === 'confirmed') statsObj.confirmed = stat.count;
+            else if (status === 'completed') statsObj.completed = stat.count;
+            else if (status === 'canceled') statsObj.canceled = stat.count;
+        });
+        
+        // Lịch hẹn hôm nay
+        const [todayAppointments] = await pool.query(
+            `SELECT COUNT(*) as count
+            FROM Appointments
+            WHERE MechanicID = ?
+            AND DATE(AppointmentDate) = CURDATE()
+            AND Status IN ('Pending', 'Confirmed')`,
+            [mechanicId]
+        );
+        
+        statsObj.today = todayAppointments[0].count;
+        
+        console.log('✅ Stats loaded:', statsObj);
+        
+        res.json({
+            success: true,
+            stats: statsObj
+        });
+    } catch (err) {
+        console.error('❌ Error getting stats:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server: ' + err.message
+        });
+    }
+});
+
+
 // ========== KẾT THÚC BONUS ROUTES ==========
 
 module.exports = router;
