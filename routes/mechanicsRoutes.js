@@ -2133,7 +2133,6 @@ router.put('/leave-requests/:id/approve', authenticateToken, checkAdminAccess, a
 /**
  * API: Lấy lịch của TẤT CẢ mechanics theo date range
  * GET /api/mechanics/schedules/team/by-date-range/:startDate/:endDate
- * Dùng cho tab "Lịch nhóm" - Weekly Timeline
  */
 router.get('/schedules/team/by-date-range/:startDate/:endDate', authenticateToken, async (req, res) => {
     try {
@@ -2141,7 +2140,7 @@ router.get('/schedules/team/by-date-range/:startDate/:endDate', authenticateToke
         
         console.log('📅 Loading team schedules:', { startDate, endDate });
         
-        // Query lịch của TẤT CẢ mechanics trong date range
+        // ✅ FIX: Đổi từ Mechanic → Users (vì không có bảng Mechanic)
         const query = `
             SELECT 
                 s.ScheduleID,
@@ -2156,13 +2155,13 @@ router.get('/schedules/team/by-date-range/:startDate/:endDate', authenticateToke
                 s.AdminNotes,
                 s.CreatedAt,
                 s.UpdatedAt,
-                m.FullName as MechanicName,
-                m.Phone as MechanicPhone
+                u.FullName as MechanicName,
+                u.PhoneNumber as MechanicPhone
             FROM StaffSchedule s
-            INNER JOIN Mechanic m ON s.MechanicID = m.MechanicID
+            INNER JOIN Users u ON s.MechanicID = u.UserID
             WHERE s.WorkDate BETWEEN ? AND ?
-            AND m.IsDeleted = 0
-            ORDER BY s.WorkDate ASC, s.StartTime ASC, m.FullName ASC
+            AND u.RoleID = 3
+            ORDER BY s.WorkDate ASC, s.StartTime ASC, u.FullName ASC
         `;
         
         const [schedules] = await pool.query(query, [startDate, endDate]);
