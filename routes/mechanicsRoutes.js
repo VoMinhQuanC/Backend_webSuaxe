@@ -2113,8 +2113,6 @@ router.get('/appointments', authenticateToken, async (req, res) => {
                 a.EstimatedEndTime,
                 a.ServiceDuration,
                 a.Status,
-                a.PaymentStatus,
-                a.TotalAmount,
                 a.PaymentMethod,
                 a.Notes,
                 a.CreatedAt,
