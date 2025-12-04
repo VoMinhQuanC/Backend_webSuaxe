@@ -2152,7 +2152,6 @@ router.get('/schedules/team/by-date-range/:startDate/:endDate', authenticateToke
                 s.Status,
                 s.IsAvailable,
                 s.Notes,
-                s.AdminNotes,
                 s.CreatedAt,
                 s.UpdatedAt,
                 u.FullName as MechanicName,
