@@ -2130,6 +2130,150 @@ router.put('/leave-requests/:id/approve', authenticateToken, checkAdminAccess, a
     }
 });
 
+/**
+ * API: Lấy lịch của TẤT CẢ mechanics theo date range
+ * GET /api/mechanics/schedules/team/by-date-range/:startDate/:endDate
+ * Dùng cho tab "Lịch nhóm" - Weekly Timeline
+ */
+router.get('/schedules/team/by-date-range/:startDate/:endDate', authenticateToken, async (req, res) => {
+    try {
+        const { startDate, endDate } = req.params;
+        
+        console.log('📅 Loading team schedules:', { startDate, endDate });
+        
+        // Query lịch của TẤT CẢ mechanics trong date range
+        const query = `
+            SELECT 
+                s.ScheduleID,
+                s.MechanicID,
+                s.WorkDate,
+                s.StartTime,
+                s.EndTime,
+                s.Type,
+                s.Status,
+                s.IsAvailable,
+                s.Notes,
+                s.AdminNotes,
+                s.CreatedAt,
+                s.UpdatedAt,
+                m.FullName as MechanicName,
+                m.Phone as MechanicPhone
+            FROM StaffSchedule s
+            INNER JOIN Mechanic m ON s.MechanicID = m.MechanicID
+            WHERE s.WorkDate BETWEEN ? AND ?
+            AND m.IsDeleted = 0
+            ORDER BY s.WorkDate ASC, s.StartTime ASC, m.FullName ASC
+        `;
+        
+        const [schedules] = await pool.query(query, [startDate, endDate]);
+        
+        console.log(`✅ Found ${schedules.length} team schedules`);
+        
+        res.json({
+            success: true,
+            schedules: schedules,
+            dateRange: { startDate, endDate },
+            totalSchedules: schedules.length
+        });
+        
+    } catch (err) {
+        console.error('❌ Error loading team schedules:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi khi tải lịch nhóm: ' + err.message
+        });
+    }
+});
+
+/**
+ * API: Đếm số mechanics làm việc mỗi ngày trong tuần
+ * GET /api/mechanics/schedules/team/count-by-week/:startDate
+ * Helper cho Weekly Timeline header
+ */
+router.get('/schedules/team/count-by-week/:startDate', authenticateToken, async (req, res) => {
+    try {
+        const { startDate } = req.params;
+        
+        // Tính endDate = startDate + 6 days (CN)
+        const start = new Date(startDate);
+        const end = new Date(start);
+        end.setDate(end.getDate() + 6);
+        const endDate = end.toISOString().split('T')[0];
+        
+        console.log('📊 Counting mechanics by week:', { startDate, endDate });
+        
+        // Query đếm số mechanics mỗi ngày
+        const query = `
+            SELECT 
+                s.WorkDate,
+                COUNT(DISTINCT s.MechanicID) as MechanicCount,
+                SUM(CASE WHEN s.IsAvailable = 1 THEN 1 ELSE 0 END) as WorkingCount,
+                SUM(CASE WHEN s.IsAvailable = 0 THEN 1 ELSE 0 END) as LeaveCount
+            FROM StaffSchedule s
+            INNER JOIN Mechanic m ON s.MechanicID = m.MechanicID
+            WHERE s.WorkDate BETWEEN ? AND ?
+            AND m.IsDeleted = 0
+            GROUP BY s.WorkDate
+            ORDER BY s.WorkDate ASC
+        `;
+        
+        const [counts] = await pool.query(query, [startDate, endDate]);
+        
+        console.log(`✅ Week stats: ${counts.length} days with schedules`);
+        
+        res.json({
+            success: true,
+            weekStats: counts,
+            dateRange: { startDate, endDate }
+        });
+        
+    } catch (err) {
+        console.error('❌ Error counting team schedules:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi khi đếm lịch nhóm: ' + err.message
+        });
+    }
+});
+
+/**
+ * API: Lấy danh sách tất cả mechanics (cho filter/dropdown)
+ * GET /api/mechanics/schedules/team/mechanics-list
+ */
+router.get('/schedules/team/mechanics-list', authenticateToken, async (req, res) => {
+    try {
+        console.log('👥 Loading mechanics list');
+        
+        const query = `
+            SELECT 
+                MechanicID,
+                FullName,
+                Phone,
+                Email
+            FROM Mechanic
+            WHERE IsDeleted = 0
+            ORDER BY FullName ASC
+        `;
+        
+        const [mechanics] = await pool.query(query);
+        
+        console.log(`✅ Found ${mechanics.length} mechanics`);
+        
+        res.json({
+            success: true,
+            mechanics: mechanics,
+            totalMechanics: mechanics.length
+        });
+        
+    } catch (err) {
+        console.error('❌ Error loading mechanics list:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi khi tải danh sách mechanics: ' + err.message
+        });
+    }
+});
+
 // ========== KẾT THÚC BONUS ROUTES ==========
 
 module.exports = router;
