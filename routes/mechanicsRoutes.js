@@ -937,9 +937,8 @@ router.post('/schedules', authenticateToken, checkMechanicAccess, async (req, re
         // Thêm lịch làm việc mới vào StaffSchedule
         const [result] = await connection.query(
             `INSERT INTO StaffSchedule (MechanicID, WorkDate, StartTime, EndTime, Type, Status, Notes, IsAvailable) 
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [mechanicId, scheduleWorkDate, startTimeOnly, endTimeOnly, type || 'available', 'Pending', notes || null, 1]
-        );
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [mechanicId, scheduleWorkDate, startTimeOnly, endTimeOnly, type || 'available', 'Approved', notes || null, 1]        );
         
         const scheduleId = result.insertId;
         
