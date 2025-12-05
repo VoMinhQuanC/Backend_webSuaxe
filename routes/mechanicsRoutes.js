@@ -807,7 +807,7 @@ router.post('/schedules', authenticateToken, checkMechanicAccess, async (req, re
     try {
         await connection.beginTransaction();
         
-        const { validationStartTime, validationEndTime, type, notes, WorkDate, StartTime, EndTime, Type, IsAvailable } = req.body;
+        const { startTime, endTime, validationStartTime, validationEndTime, type, notes, WorkDate, StartTime, EndTime, Type, IsAvailable } = req.body;
         const mechanicId = req.user.userId;
         
         // Parse dữ liệu
