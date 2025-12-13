@@ -65,8 +65,8 @@ app.use((req, res, next) => {
 // --- CORS ---
 const corsOptions = {
   origin: process.env.NODE_ENV === 'production'
-    ? ['https://suaxe-web-73744.web.app', 'https://suaxe-web-73744.firebaseapp.com', '*']
-    : ['http://localhost:3000', 'http://127.0.0.1:5501', 'http://localhost:3001'],
+    ? ['https://suaxe-web-73744.web.app', 'https://suaxe-web-73744.firebaseapp.com']
+    : true,
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
