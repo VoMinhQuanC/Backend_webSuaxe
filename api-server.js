@@ -158,7 +158,7 @@ try { const auth0Routes = require('./routes/auth0Routes'); app.use('/api/auth0',
 try { const serviceRoutes = require('./routes/serviceRoutes'); app.use('/api/services', serviceRoutes); } catch (e) {}
 try { const bookingRoutes = require('./routes/bookingRoutes'); app.use('/api/booking', bookingRoutes); } catch (e) {}
 try { const scheduleRoutes = require('./routes/schedulesRoutes'); app.use('/api/schedules', scheduleRoutes); } catch (e) { console.error('Không load được schedulesRoutes:', e.message);}
-try { const profileRoutes = require('./routes/profileRoutes'); app.use('/api/users', profileRoutes); } catch (e) {}
+try { const profileRoutes = require('./routes/profileRoutes'); app.use('/api/profile', profileRoutes); } catch (e) {}
 try { const userRoutes = require('./routes/userRoutes'); app.use('/api/users', userRoutes); } catch (e) {}
 try { const revenueRoutes = require('./routes/revenueRoutes'); app.use('/api/revenue', revenueRoutes); } catch (e) {}
 try { 
