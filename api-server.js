@@ -62,19 +62,16 @@ app.use((req, res, next) => {
   next();
 });
 
-// --- CORS ---
-const corsOptions = {
-  origin: process.env.NODE_ENV === 'production'
-    ? ['https://suaxe-web-73744.web.app', 'https://suaxe-web-73744.firebaseapp.com']
-    : true,  // ← THAY ĐỔI: true = cho phép TẤT CẢ origin khi dev
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],  // ← THÊM 'OPTIONS'
+// --- CORS - Cho phép tất cả origins ---
+const corsMiddleware = cors({
+  origin: '*',  // Cho phép TẤT CẢ origins
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true,
-  optionsSuccessStatus: 204  // ← THÊM dòng này
-};
+  credentials: false  // Phải false khi origin: '*'
+});
 
-app.use(cors(corsOptions));
-app.options('*', cors(corsOptions));  // ← THÊM dòng này - Xử lý preflight
+app.use(corsMiddleware);
+app.options('*', corsMiddleware);
 
 // --- Session & Passport (Auth0 ready) ---
 app.use(session({
