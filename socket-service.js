@@ -37,7 +37,7 @@ function initializeSocket(server) {
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key-2024');
       socket.userId = decoded.userId;
-      socket.roleId = decoded.roleId;
+      socket.role = decoded.role;
       socket.userName = decoded.userName || 'User';
       next();
     } catch (err) {
@@ -53,7 +53,7 @@ function initializeSocket(server) {
     userSockets.set(socket.userId, socket.id);
 
     // Join room theo role
-    const roleRoom = getRoleRoom(socket.roleId);
+    const roleRoom = getRoleRoom(socket.role);
     socket.join(roleRoom);
     socket.join(`user_${socket.userId}`); // Personal room
     
@@ -78,13 +78,13 @@ function initializeSocket(server) {
 /**
  * Get room name by role
  */
-function getRoleRoom(roleId) {
+function getRoleRoom(role) {
   const rooms = {
     1: 'admin',
     2: 'customer', 
     3: 'mechanic'
   };
-  return rooms[roleId] || 'customer';
+  return rooms[role] || 'customer';
 }
 
 /**
