@@ -35,10 +35,10 @@ function initializeSocket(server) {
     }
 
     try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key-2024');
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'sua_xe_secret_key_railway_2024');
       socket.userId = decoded.userId;
-      socket.role = decoded.role;
-      socket.userName = decoded.userName || 'User';
+      socket.roleId = decoded.role || decoded.roleId; // Support both 'role' and 'roleId'
+      socket.userName = decoded.userName || decoded.email || 'User';
       next();
     } catch (err) {
       console.log('❌ Socket authentication failed:', err.message);
@@ -53,7 +53,7 @@ function initializeSocket(server) {
     userSockets.set(socket.userId, socket.id);
 
     // Join room theo role
-    const roleRoom = getRoleRoom(socket.role);
+    const roleRoom = getRoleRoom(socket.roleId);
     socket.join(roleRoom);
     socket.join(`user_${socket.userId}`); // Personal room
     
@@ -78,13 +78,13 @@ function initializeSocket(server) {
 /**
  * Get room name by role
  */
-function getRoleRoom(role) {
+function getRoleRoom(roleId) {
   const rooms = {
     1: 'admin',
     2: 'customer', 
     3: 'mechanic'
   };
-  return rooms[role] || 'customer';
+  return rooms[roleId] || 'customer';
 }
 
 /**
