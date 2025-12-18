@@ -1,5 +1,6 @@
 // bookingRoutes.js - Routes cho chức năng đặt lịch
 const express = require('express');
+const socketService = require('../socket-service');
 const router = express.Router();
 const Booking = require('../models/Booking');
 const Service = require('../models/Service');
@@ -882,6 +883,8 @@ router.put('/appointments/:id', authenticateToken, async (req, res) => {
                 message: 'Không có quyền cập nhật lịch hẹn này'
             });
         }
+
+        const previousStatus = appointment.Status;
         
         // Lấy dữ liệu từ request
         const {
@@ -919,10 +922,31 @@ router.put('/appointments/:id', authenticateToken, async (req, res) => {
         
         // Cập nhật lịch hẹn
         await Booking.updateAppointment(appointmentId, updateData);
-        
+
+        // ✅ Lấy thông tin đầy đủ sau khi update
+        const [updatedAppointments] = await pool.query(`
+            SELECT a.*, 
+                u.FullName, u.Email, u.PhoneNumber,
+                v.LicensePlate, v.Brand, v.Model, v.Year,
+                (SELECT GROUP_CONCAT(s.ServiceName SEPARATOR ', ')
+                FROM AppointmentServices aps
+                JOIN Services s ON aps.ServiceID = s.ServiceID
+                WHERE aps.AppointmentID = a.AppointmentID) AS Services
+            FROM Appointments a
+            LEFT JOIN Users u ON a.UserID = u.UserID
+            LEFT JOIN Vehicles v ON a.VehicleID = v.VehicleID
+            WHERE a.AppointmentID = ?
+        `, [appointmentId]);
+
+        const appointmentData = updatedAppointments[0];
+
+        // 🔥 EMIT SOCKET EVENT
+        socketService.emitAppointmentUpdated(appointmentData, previousStatus);
+
         res.json({
             success: true,
-            message: 'Cập nhật lịch hẹn thành công'
+            message: 'Cập nhật lịch hẹn thành công',
+            appointment: appointmentData
         });
     } catch (err) {
         console.error('Lỗi khi cập nhật lịch hẹn:', err);
@@ -1018,10 +1042,30 @@ router.post('/create', authenticateToken, async (req, res) => {
             
             console.log('✅ Appointment created:', appointmentId);
             
+            // ✅ THÊM ĐOẠN NÀY - Lấy thông tin đầy đủ để emit socket
+            const [fullAppointment] = await connection.query(`
+                SELECT a.*, 
+                    u.FullName, u.Email, u.PhoneNumber,
+                    v.LicensePlate, v.Brand, v.Model, v.Year,
+                    (SELECT GROUP_CONCAT(s.ServiceName SEPARATOR ', ')
+                     FROM AppointmentServices aps
+                     JOIN Services s ON aps.ServiceID = s.ServiceID
+                     WHERE aps.AppointmentID = a.AppointmentID) AS Services
+                FROM Appointments a
+                LEFT JOIN Users u ON a.UserID = u.UserID
+                LEFT JOIN Vehicles v ON a.VehicleID = v.VehicleID
+                WHERE a.AppointmentID = ?
+            `, [appointmentId]);
+            
+            const appointmentData = fullAppointment[0];
+            
+            // 🔥 EMIT SOCKET EVENT - Appointment mới
+            socketService.emitNewAppointment(appointmentData);
+            
             res.status(201).json({
                 success: true,
                 message: 'Tạo lịch hẹn thành công',
-                appointment: appointment[0]
+                appointment: appointmentData
             });
             
         } catch (err) {

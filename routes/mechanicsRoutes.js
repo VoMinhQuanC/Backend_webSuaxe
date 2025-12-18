@@ -2,6 +2,7 @@
 // ĐÃ SỬA: Dùng bảng StaffSchedule thay vì MechanicSchedules
 
 const express = require('express');
+const socketService = require('../socket-service');
 const router = express.Router();
 const { pool } = require('../db');
 const { authenticateToken } = require('./authRoutes');
@@ -961,7 +962,19 @@ router.post('/schedules', authenticateToken, checkMechanicAccess, async (req, re
         }
         
         await connection.commit();
-        
+
+        // ✅ Lấy thông tin đầy đủ schedule
+        const [scheduleData] = await connection.query(`
+            SELECT s.*, u.FullName as MechanicName, u.Email, u.PhoneNumber
+            FROM StaffSchedule s
+            JOIN Users u ON s.MechanicID = u.UserID
+            WHERE s.ScheduleID = ?
+        `, [scheduleId]);
+
+        // 🔥 EMIT SOCKET EVENT
+        const socketService = require('../socket-service');
+        socketService.emitScheduleCreated(scheduleData[0]);
+
         res.status(201).json({
             success: true,
             message: 'Đăng ký lịch làm việc thành công, đang chờ phê duyệt',
@@ -1515,7 +1528,19 @@ router.put('/schedules/:id/approve', authenticateToken, checkAdminAccess, async 
         );
         
         await connection.commit();
-        
+
+        // ✅ Lấy thông tin đầy đủ schedule sau approve
+        const [approvedSchedule] = await connection.query(`
+            SELECT s.*, u.FullName as MechanicName, u.Email, u.PhoneNumber
+            FROM StaffSchedule s
+            JOIN Users u ON s.MechanicID = u.UserID
+            WHERE s.ScheduleID = ?
+        `, [scheduleId]);
+
+        // 🔥 EMIT SOCKET EVENT
+        const socketService = require('../socket-service');
+        socketService.emitScheduleStatusChanged(approvedSchedule[0]);
+
         res.json({
             success: true,
             message: isLeaveRequest ? 'Duyệt đơn xin nghỉ thành công' : 'Phê duyệt lịch làm việc thành công'
@@ -1628,11 +1653,23 @@ router.put('/schedules/:id/reject', authenticateToken, checkAdminAccess, async (
         );
         
         await connection.commit();
-        
+
+        // ✅ Lấy thông tin đầy đủ schedule sau reject
+        const [rejectedSchedule] = await connection.query(`
+            SELECT s.*, u.FullName as MechanicName, u.Email, u.PhoneNumber
+            FROM StaffSchedule s
+            JOIN Users u ON s.MechanicID = u.UserID
+            WHERE s.ScheduleID = ?
+        `, [scheduleId]);
+
+        // 🔥 EMIT SOCKET EVENT
+        const socketService = require('../socket-service');
+        socketService.emitScheduleStatusChanged(rejectedSchedule[0]);
+
         let successMessage = 'Từ chối lịch làm việc thành công';
         if (isLeaveRequest) successMessage = 'Từ chối đơn xin nghỉ thành công';
         if (isEditRequest) successMessage = 'Từ chối đơn xin sửa lịch thành công';
-        
+
         res.json({
             success: true,
             message: successMessage

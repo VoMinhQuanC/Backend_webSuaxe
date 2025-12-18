@@ -1,10 +1,8 @@
-// Phiên bản gộp và hỗ trợ upload ảnh lên Google Cloud Storage.
-// Tối ưu cho deploy trên App Engine / Cloud Run trong cùng project (suaxe-api).
-// ✅ ĐÃ THÊM: Vehicle API inline để lưu xe
-
 const express = require('express');
 require('dotenv').config();
 const cors = require('cors');
+const http = require('http');
+const socketService = require('./socket-service');
 const mysql = require('mysql2/promise');
 const path = require('path');
 const fs = require('fs');
@@ -692,11 +690,26 @@ app.use((err, req, res, next) => {
   res.status(500).json({ success: false, message: 'Lỗi server: ' + (err.message || 'Unknown error') });
 });
 
-// Start server
+// Start server with Socket.io
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => {
-  console.log(`API server running on port ${PORT}`);
+const server = http.createServer(app);
+
+// Initialize Socket.io
+socketService.initializeSocket(server);
+
+server.listen(PORT, () => {
+  console.log(`🚀 API server running on port ${PORT}`);
+  console.log(`📡 Socket.io enabled`);
   console.log(`✅ Vehicle API enabled at /api/vehicles`);
 });
 
-module.exports = app;
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  server.close(() => {
+    console.log('Server closed');
+    pool.end();
+  });
+});
+
+module.exports = { app, server };
