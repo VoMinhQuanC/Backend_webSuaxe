@@ -13,8 +13,12 @@ const passport = require('passport');
 const Auth0Strategy = require('passport-auth0');
 const { Storage } = require('@google-cloud/storage');
 const multer = require('multer');
+const paymentRoutes = require('./routes/paymentRoutes');
 
 const app = express();
+
+// --- Mount payment routes ---
+app.use('/api/payment', paymentRoutes);
 
 // --- Config GCS (Optional - không bắt buộc) ---
 const GCS_BUCKET = process.env.GCS_BUCKET || 'suaxe-api-2-web';
