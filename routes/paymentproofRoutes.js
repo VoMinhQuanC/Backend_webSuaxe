@@ -527,10 +527,11 @@ router.post('/admin/approve/:proofId', authenticateToken, checkAdminAccess, asyn
             [paymentResult.insertId, proofId]
         );
 
-        // 4. Cập nhật Appointment status nếu cần
+        // 4. Cập nhật Appointment status thành 'Pending' (HIỆN RA)
         await connection.query(`
             UPDATE Appointments 
-            SET PaymentMethod = 'Chuyển khoản ngân hàng'
+            SET Status = 'Pending',
+                PaymentMethod = 'Chuyển khoản ngân hàng'
             WHERE AppointmentID = ?
         `, [proof.AppointmentID]);
 
@@ -701,9 +702,10 @@ router.post('/process-expired', async (req, res) => {
             await pool.query(`
                 UPDATE Appointments a
                 JOIN PaymentProofs pp ON a.AppointmentID = pp.AppointmentID
-                SET a.Status = 'Canceled', a.Notes = CONCAT(IFNULL(a.Notes, ''), ' [Hủy do không thanh toán trong 15 phút]')
+                SET a.Status = 'Đã hủy', 
+                    a.Notes = CONCAT(IFNULL(a.Notes, ''), ' [Hủy do không thanh toán trong 15 phút]')
                 WHERE pp.Status = 'Expired'
-                AND a.Status = 'Pending'
+                AND a.Status = 'Chờ thanh toán'
             `);
         }
 
@@ -718,6 +720,178 @@ router.post('/process-expired', async (req, res) => {
             success: false,
             message: error.message
         });
+    }
+});
+
+// ============================================
+// THÊM CÁC ENDPOINT MỚI
+// ============================================
+
+/**
+ * API: Lấy thông tin payment proof theo AppointmentID
+ * GET /api/payment-proof/appointment/:appointmentId
+ * Dùng cho trang payment.html
+ */
+router.get('/appointment/:appointmentId', authenticateToken, async (req, res) => {
+    try {
+        const { appointmentId } = req.params;
+        const userId = req.user.userId;
+        const isAdmin = req.user.role === 1;
+
+        // Query proof
+        let query = `
+            SELECT pp.*, a.Status as AppointmentStatus, a.PaymentMethod
+            FROM PaymentProofs pp
+            JOIN Appointments a ON pp.AppointmentID = a.AppointmentID
+            WHERE pp.AppointmentID = ?
+        `;
+        
+        // Nếu không phải admin, chỉ cho xem proof của mình
+        if (!isAdmin) {
+            query += ' AND a.UserID = ?';
+        }
+        
+        query += ' ORDER BY pp.CreatedAt DESC LIMIT 1';
+
+        const params = isAdmin ? [appointmentId] : [appointmentId, userId];
+        const [proofs] = await pool.query(query, params);
+
+        if (proofs.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Không tìm thấy thông tin thanh toán'
+            });
+        }
+
+        res.json({
+            success: true,
+            data: proofs[0]
+        });
+
+    } catch (error) {
+        console.error('❌ Error getting proof by appointment:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+});
+
+/**
+ * API: Đánh dấu proof hết hạn (gọi từ client khi countdown = 0)
+ * POST /api/payment-proof/expire/:proofId
+ */
+router.post('/expire/:proofId', authenticateToken, async (req, res) => {
+    const connection = await pool.getConnection();
+    
+    try {
+        const { proofId } = req.params;
+        const userId = req.user.userId;
+
+        await connection.beginTransaction();
+
+        // Kiểm tra proof thuộc về user này và đang Pending
+        const [proofs] = await connection.query(`
+            SELECT pp.*, a.UserID 
+            FROM PaymentProofs pp
+            JOIN Appointments a ON pp.AppointmentID = a.AppointmentID
+            WHERE pp.ProofID = ? AND a.UserID = ? AND pp.Status = 'Pending'
+        `, [proofId, userId]);
+
+        if (proofs.length === 0) {
+            await connection.rollback();
+            return res.status(404).json({
+                success: false,
+                message: 'Không tìm thấy hoặc không có quyền'
+            });
+        }
+
+        const proof = proofs[0];
+
+        // Cập nhật proof status
+        await connection.query(
+            'UPDATE PaymentProofs SET Status = "Expired" WHERE ProofID = ?',
+            [proofId]
+        );
+
+        // Cập nhật appointment status thành Đã hủy
+        await connection.query(`
+            UPDATE Appointments 
+            SET Status = 'Đã hủy', 
+                Notes = CONCAT(IFNULL(Notes, ''), ' [Hủy tự động: không thanh toán trong 15 phút]')
+            WHERE AppointmentID = ?
+        `, [proof.AppointmentID]);
+
+        await connection.commit();
+
+        console.log(`⏰ Payment proof expired by user: ${proofId}`);
+
+        res.json({
+            success: true,
+            message: 'Đã hủy đơn hàng do hết thời gian thanh toán'
+        });
+
+    } catch (error) {
+        await connection.rollback();
+        console.error('❌ Error expiring proof:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    } finally {
+        connection.release();
+    }
+});
+
+/**
+ * API: Kiểm tra và tự động hủy các đơn hết hạn
+ * POST /api/payment-proof/auto-expire
+ * Có thể gọi từ cron job hoặc scheduler
+ */
+router.post('/auto-expire', async (req, res) => {
+    const connection = await pool.getConnection();
+    
+    try {
+        await connection.beginTransaction();
+
+        // Tìm và cập nhật các proof hết hạn
+        const [result] = await connection.query(`
+            UPDATE PaymentProofs 
+            SET Status = 'Expired'
+            WHERE Status = 'Pending' 
+            AND ExpiresAt < NOW()
+        `);
+
+        // Cập nhật Appointment status
+        if (result.affectedRows > 0) {
+            await connection.query(`
+                UPDATE Appointments a
+                JOIN PaymentProofs pp ON a.AppointmentID = pp.AppointmentID
+                SET a.Status = 'Đã hủy', 
+                    a.Notes = CONCAT(IFNULL(a.Notes, ''), ' [Hủy tự động: không thanh toán trong 15 phút]')
+                WHERE pp.Status = 'Expired'
+                AND a.Status = 'Chờ thanh toán'
+            `);
+        }
+
+        await connection.commit();
+
+        console.log(`⏰ Auto-expired ${result.affectedRows} payment proofs`);
+
+        res.json({
+            success: true,
+            expiredCount: result.affectedRows
+        });
+
+    } catch (error) {
+        await connection.rollback();
+        console.error('❌ Error auto-expiring proofs:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    } finally {
+        connection.release();
     }
 });
 

@@ -292,7 +292,13 @@ class Booking {
             
             // console.log('Creating appointment with end time:', estimatedEndTime);
             
-           // Tạo lịch hẹn - ĐẢM BẢO TRẠNG THÁI MẶC ĐỊNH LÀ 'Pending'
+           // Tạo lịch hẹn - Status dựa theo phương thức thanh toán
+            // Chuyển khoản: "Chờ thanh toán" (ẩn) → Admin duyệt → "Pending" (hiện)
+            // Tại tiệm: "Pending" luôn
+            const appointmentStatus = (bookingData.paymentMethod === 'Chuyển khoản ngân hàng') 
+                ? 'Chờ thanh toán' 
+                : 'Pending';
+            
             const [appointmentResult] = await connection.query(
                 'INSERT INTO Appointments (UserID, VehicleID, MechanicID, AppointmentDate, Status, Notes, EstimatedEndTime, ServiceDuration, PaymentMethod) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
                 [
@@ -300,11 +306,11 @@ class Booking {
                     vehicleId,
                     bookingData.mechanicId || null,
                     bookingData.appointmentDate,
-                    'Pending',  // Trạng thái mặc định khi tạo luôn là Pending
+                    appointmentStatus,  // Status dựa theo payment method
                     bookingData.notes || null,
                     estimatedEndTime, 
                     bookingData.totalServiceTime || 0,
-                    bookingData.paymentMethod || 'Thanh toán tại tiệm'  // Thêm dòng này
+                    bookingData.paymentMethod || 'Thanh toán tại tiệm'
                 ]
             );
             
