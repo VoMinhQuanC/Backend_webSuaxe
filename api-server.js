@@ -182,6 +182,16 @@ try {
   console.error('Stack:', e.stack);
 }
 
+// ✅ Payment Proof Routes - Xác nhận thanh toán chuyển khoản
+try { 
+  const paymentProofRoutes = require('./routes/paymentproofRoutes'); 
+  app.use('/api/payment-proof', paymentProofRoutes); 
+  console.log('✅ paymentProofRoutes loaded successfully');
+} catch (e) { 
+  console.error('❌ paymentProofRoutes ERROR:', e.message); 
+  console.error('Stack:', e.stack);
+}
+
 // ================= ✅ VEHICLE API - INLINE (không cần file riêng) =================
 console.log('🚗 Loading inline Vehicle API...');
 
