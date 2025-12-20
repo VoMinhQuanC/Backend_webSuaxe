@@ -191,6 +191,15 @@ try {
   console.error('❌ paymentProofRoutes ERROR:', e.message); 
   console.error('Stack:', e.stack);
 }
+// ⭐ Admin Payment Proof Routes - Admin duyệt ảnh chứng từ
+try { 
+  const adminPaymentProofRoutes = require('./routes/adminPaymentProofRoutes'); 
+  app.use('/api/admin', adminPaymentProofRoutes); 
+  console.log('✅ adminPaymentProofRoutes loaded successfully');
+} catch (e) { 
+  console.error('❌ adminPaymentProofRoutes ERROR:', e.message); 
+  console.error('Stack:', e.stack);
+}
 
 // ================= ✅ VEHICLE API - INLINE (không cần file riêng) =================
 console.log('🚗 Loading inline Vehicle API...');

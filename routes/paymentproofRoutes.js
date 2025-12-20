@@ -243,6 +243,14 @@ router.post('/upload/:proofId', authenticateToken, upload.single('image'), async
         `, [uploadResult.secure_url, uploadResult.public_id, proofId]);
 
         console.log(`✅ Payment proof uploaded: ${proofId}`);
+        // ⭐ UPDATE APPOINTMENT STATUS TO PENDINGAPPROVAL ⭐
+        await pool.query(`
+            UPDATE Appointments 
+            SET Status = 'PendingApproval'
+            WHERE AppointmentID = ?
+        `, [proof.AppointmentID]);
+
+        console.log(`📊 Appointment ${proof.AppointmentID} status updated to: PendingApproval`);
 
         // TODO: Emit socket event để notify admin
         // socketService.emitNewPaymentProof(proofId);
