@@ -111,6 +111,7 @@ router.get('/recent-booking', authenticateToken, checkAdminAccess, async (req, r
                 LEFT JOIN Users u ON a.UserID = u.UserID
             WHERE 
                 a.IsDeleted = 0
+                AND a.UserID IS NOT NULL
             ORDER BY 
                 a.AppointmentDate DESC
             LIMIT ?
