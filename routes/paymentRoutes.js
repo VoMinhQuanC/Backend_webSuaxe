@@ -74,7 +74,7 @@ router.get('/qr/:appointmentId', async (req, res) => {
         // BƯỚC 4: Thông tin tài khoản ngân hàng (LẤY TỪ .ENV)
         const bankInfo = {
             accountNo: process.env.BANK_ACCOUNT_NO || '0947084064',
-            accountName: process.env.BANK_ACCOUNT_NAME || '',
+            accountName: process.env.BANK_ACCOUNT_NAME || 'VO MINH QUAN',
             bankId: process.env.BANK_ID || '970422', // 970422 = MB Bank
             bankName: getBankName(process.env.BANK_ID || '970422')
         };
@@ -103,6 +103,7 @@ router.get('/qr/:appointmentId', async (req, res) => {
                     accountNo: bankInfo.accountNo,
                     accountName: bankInfo.accountName,
                     bankName: bankInfo.bankName,
+                    bankCode: bankInfo.bankId, // ✅ ĐÃ THÊM bankCode
                     transferContent: bookingCode // Nội dung CK tự động
                 }
             }
