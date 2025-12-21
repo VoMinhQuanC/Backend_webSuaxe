@@ -191,6 +191,17 @@ try {
   console.error('❌ paymentProofRoutes ERROR:', e.message); 
   console.error('Stack:', e.stack);
 }
+
+// 📊 Admin Dashboard Routes - Thống kê tổng quan
+try { 
+  const dashboardRoutes = require('./routes/dashboardRoutes'); 
+  app.use('/api/admin/dashboard', dashboardRoutes); 
+  console.log('✅ dashboardRoutes loaded successfully');
+} catch (e) { 
+  console.error('❌ dashboardRoutes ERROR:', e.message); 
+  console.error('Stack:', e.stack);
+}
+
 // ⭐ Admin Payment Proof Routes - Admin duyệt ảnh chứng từ
 try { 
   const adminPaymentProofRoutes = require('./routes/adminPaymentProofRoutes'); 
