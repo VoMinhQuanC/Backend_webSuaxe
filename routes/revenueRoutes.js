@@ -163,11 +163,21 @@ router.get('/', authenticateToken, checkAdminAccess, async (req, res) => {
                 p.PaymentMethod,
                 p.PaymentDate,
                 p.Status,
-                COALESCE(p.CustomerName, '') as CustomerName,
-                COALESCE(p.Services, '') as Services,
-                COALESCE(p.MechanicName, '') as MechanicName
+                COALESCE(u.FullName, p.CustomerName, 'N/A') as CustomerName,
+                COALESCE(mechanic.FullName, p.MechanicName, 'N/A') as MechanicName,
+                COALESCE(
+                    (SELECT GROUP_CONCAT(s.ServiceName SEPARATOR ', ')
+                    FROM AppointmentServices aps
+                    JOIN Services s ON aps.ServiceID = s.ServiceID
+                    WHERE aps.AppointmentID = a.AppointmentID),
+                    p.Services, 
+                    'N/A'
+                ) as Services
             FROM 
                 Payments p
+                LEFT JOIN Appointments a ON p.AppointmentID = a.AppointmentID
+                LEFT JOIN Users u ON a.UserID = u.UserID
+                LEFT JOIN Users mechanic ON a.MechanicID = mechanic.UserID
             WHERE 
                 p.PaymentDate BETWEEN ? AND ?
                 AND (p.Status = 'Completed' OR p.Status = 'Hoàn thành'`;
