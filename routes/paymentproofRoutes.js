@@ -161,6 +161,141 @@ router.post('/create', authenticateToken, async (req, res) => {
 });
 
 /**
+ * API: Upload ảnh chứng từ thanh toán (SIMPLIFIED - cho Flutter app)
+ * POST /api/payment-proof/upload
+ * FormData: 
+ *   - appointmentId: number
+ *   - proofImage: file
+ */
+router.post('/upload', authenticateToken, upload.single('proofImage'), async (req, res) => {
+    const connection = await pool.getConnection();
+    
+    try {
+        const { appointmentId } = req.body;
+        const userId = req.user.userId;
+
+        console.log(`📤 Upload payment proof - AppointmentID: ${appointmentId}, UserID: ${userId}`);
+
+        // Validate
+        if (!appointmentId) {
+            return res.status(400).json({
+                success: false,
+                message: 'Thiếu appointmentId'
+            });
+        }
+
+        if (!req.file) {
+            return res.status(400).json({
+                success: false,
+                message: 'Vui lòng chọn ảnh chứng từ thanh toán'
+            });
+        }
+
+        await connection.beginTransaction();
+
+        // 1. Kiểm tra appointment thuộc về user này
+        const [appointments] = await connection.query(
+            'SELECT * FROM Appointments WHERE AppointmentID = ? AND UserID = ? AND IsDeleted = 0',
+            [appointmentId, userId]
+        );
+
+        if (appointments.length === 0) {
+            await connection.rollback();
+            return res.status(404).json({
+                success: false,
+                message: 'Không tìm thấy đơn hàng'
+            });
+        }
+
+        // 2. Tính totalAmount
+        const [services] = await connection.query(`
+            SELECT SUM(s.Price * aps.Quantity) as TotalAmount
+            FROM AppointmentServices aps
+            JOIN Services s ON aps.ServiceID = s.ServiceID
+            WHERE aps.AppointmentID = ?
+        `, [appointmentId]);
+
+        const totalAmount = services[0]?.TotalAmount || 0;
+        const transferContent = `BK${appointmentId}`;
+
+        // 3. Kiểm tra proof đã tồn tại chưa
+        const [existingProofs] = await connection.query(
+            'SELECT * FROM PaymentProofs WHERE AppointmentID = ? ORDER BY CreatedAt DESC LIMIT 1',
+            [appointmentId]
+        );
+
+        let proofId;
+
+        if (existingProofs.length > 0) {
+            proofId = existingProofs[0].ProofID;
+            console.log(`♻️ Updating existing proof: ${proofId}`);
+        } else {
+            // Tạo proof mới
+            const now = new Date();
+            const expiresAt = new Date(now.getTime() + PAYMENT_EXPIRY_MINUTES * 60 * 1000);
+
+            const [insertResult] = await connection.query(
+                `INSERT INTO PaymentProofs 
+                 (AppointmentID, Amount, TransferContent, QRGeneratedAt, ExpiresAt, Status) 
+                 VALUES (?, ?, ?, ?, ?, 'Pending')`,
+                [appointmentId, totalAmount, transferContent, now, expiresAt]
+            );
+
+            proofId = insertResult.insertId;
+            console.log(`✨ Created new proof: ${proofId}`);
+        }
+
+        // 4. Upload ảnh lên Cloudinary
+        const filename = `payment_proof_${proofId}_${Date.now()}`;
+        const uploadResult = await uploadToCloudinary(
+            req.file.buffer, 
+            'payment-proofs', 
+            filename
+        );
+
+        console.log(`☁️ Uploaded to Cloudinary: ${uploadResult.secure_url}`);
+
+        // 5. Cập nhật PaymentProof
+        await connection.query(`
+            UPDATE PaymentProofs 
+            SET ImageUrl = ?, 
+                ImagePublicId = ?,
+                ProofUploadedAt = NOW(),
+                Status = 'WaitingReview'
+            WHERE ProofID = ?
+        `, [uploadResult.secure_url, uploadResult.public_id, proofId]);
+
+        // 6. Cập nhật Appointment status
+        await connection.query(`
+            UPDATE Appointments 
+            SET Status = 'PendingApproval'
+            WHERE AppointmentID = ?
+        `, [appointmentId]);
+
+        await connection.commit();
+
+        console.log(`✅ Payment proof uploaded successfully: ${proofId}`);
+
+        res.json({
+            success: true,
+            message: 'Upload chứng từ thành công',
+            proofId: proofId,
+            status: 'WaitingReview'
+        });
+
+    } catch (error) {
+        await connection.rollback();
+        console.error('❌ Error uploading payment proof:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server: ' + error.message
+        });
+    } finally {
+        connection.release();
+    }
+});
+
+/**
  * API: Upload ảnh chứng từ thanh toán
  * POST /api/payment-proof/upload/:proofId
  * FormData: image (file)
