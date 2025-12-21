@@ -2,9 +2,9 @@
 const express = require('express');
 const router = express.Router();
 const mysql = require('mysql2/promise');
+const axios = require('axios'); // ← THÊM AXIOS
 
 // Sử dụng pool từ api-server.js hoặc tạo connection
-// Giả sử bạn export pool từ api-server.js hoặc db.js
 const pool = mysql.createPool({
     host: process.env.MYSQLHOST || process.env.DB_HOST || 'localhost',
     user: process.env.MYSQLUSER || process.env.DB_USER || 'root',
@@ -20,7 +20,7 @@ const pool = mysql.createPool({
  * API: Lấy thông tin thanh toán + QR code cho đơn hàng
  * GET /api/payment/qr/:appointmentId
  * 
- * Response: { qrUrl, bookingCode, totalAmount, bankInfo }
+ * Response: { qrString, bookingCode, totalAmount, bankInfo }
  */
 router.get('/qr/:appointmentId', async (req, res) => {
     try {
@@ -79,32 +79,50 @@ router.get('/qr/:appointmentId', async (req, res) => {
             bankName: getBankName(process.env.BANK_ID || '970422')
         };
         
-        // BƯỚC 5: Generate QR URL với VietQR API (MIỄN PHÍ)
-        // Format: https://img.vietqr.io/image/{BANK_ID}-{ACCOUNT_NO}-{TEMPLATE}.png?amount={AMOUNT}&addInfo={CONTENT}
-        // addInfo chính là NỘI DUNG CHUYỂN KHOẢN - tự động theo mã đơn
-        const qrUrl = `https://img.vietqr.io/image/${bankInfo.bankId}-${bankInfo.accountNo}-compact2.png?amount=${totalAmount}&addInfo=${encodeURIComponent(bookingCode)}&accountName=${encodeURIComponent(bankInfo.accountName)}`;
+        // BƯỚC 5: ✅ GỌI VIETQR API V2 - GENERATE QR STRING CHUẨN
+        let qrString = '';
+        try {
+            const vietqrResponse = await axios.post('https://api.vietqr.io/v2/generate', {
+                accountNo: bankInfo.accountNo,
+                accountName: bankInfo.accountName,
+                acqId: bankInfo.bankId,
+                amount: parseInt(totalAmount),
+                addInfo: bookingCode,
+                format: 'text',      // ← Trả về QR string thay vì ảnh
+                template: 'compact'
+            });
+            
+            if (vietqrResponse.data && vietqrResponse.data.data) {
+                qrString = vietqrResponse.data.data.qrDataURL;
+                console.log(`✅ VietQR API success - QR Length: ${qrString.length}`);
+            }
+        } catch (vietqrError) {
+            console.error('❌ VietQR API error:', vietqrError.message);
+            // Fallback: Tạo QR URL (image) nếu API lỗi
+            qrString = `https://img.vietqr.io/image/${bankInfo.bankId}-${bankInfo.accountNo}-compact2.png?amount=${totalAmount}&addInfo=${encodeURIComponent(bookingCode)}`;
+        }
         
         console.log(`✅ QR generated successfully`);
         console.log(`📝 Booking Code: ${bookingCode}`);
         console.log(`💰 Amount: ${totalAmount}đ`);
-        console.log(`🔗 QR URL: ${qrUrl}`);
         
         // BƯỚC 6: Trả về response
         res.json({
             success: true,
             data: {
                 appointmentId: appointmentId,
-                bookingCode: bookingCode, // Mã đơn: BK1030, BK1031, ...
-                totalAmount: totalAmount, // Tổng tiền thật từ DB
+                bookingCode: bookingCode,
+                totalAmount: totalAmount,
                 customerName: appointment.CustomerName,
                 serviceNames: serviceNames,
-                qrUrl: qrUrl,
+                qrString: qrString,  // ✅ QR STRING từ VietQR API
+                qrUrl: `https://img.vietqr.io/image/${bankInfo.bankId}-${bankInfo.accountNo}-compact2.png?amount=${totalAmount}&addInfo=${encodeURIComponent(bookingCode)}`, // Backup
                 bankInfo: {
                     accountNo: bankInfo.accountNo,
                     accountName: bankInfo.accountName,
                     bankName: bankInfo.bankName,
-                    bankCode: bankInfo.bankId, // ✅ ĐÃ THÊM bankCode
-                    transferContent: bookingCode // Nội dung CK tự động
+                    bankCode: bankInfo.bankId,
+                    transferContent: bookingCode
                 }
             }
         });
