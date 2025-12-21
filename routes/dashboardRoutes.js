@@ -53,7 +53,7 @@ router.get('/summary', authenticateToken, checkAdminAccess, async (req, res) => 
             SELECT COUNT(*) as count
             FROM Users
             WHERE RoleID = 2
-            AND IsDeleted = 0
+            AND Status = 1
         `);
         
         // 4. Lịch hẹn chờ xử lý (Pending)
