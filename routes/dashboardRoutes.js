@@ -113,7 +113,7 @@ router.get('/recent-booking', authenticateToken, checkAdminAccess, async (req, r
                 a.IsDeleted = 0
                 AND a.UserID IS NOT NULL
             ORDER BY 
-                a.AppointmentDate DESC
+                a.AppointmentID DESC
             LIMIT ?
         `, [parseInt(limit)]);
         
