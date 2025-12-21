@@ -52,7 +52,7 @@ router.get('/summary', authenticateToken, checkAdminAccess, async (req, res) => 
         const [totalCustomers] = await pool.query(`
             SELECT COUNT(*) as count
             FROM Users
-            WHERE RoleID = 3
+            WHERE RoleID = 2
             AND IsDeleted = 0
         `);
         
