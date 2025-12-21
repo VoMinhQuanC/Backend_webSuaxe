@@ -17,9 +17,6 @@ const paymentRoutes = require('./routes/paymentRoutes');
 
 const app = express();
 
-// --- Mount payment routes ---
-app.use('/api/payment', paymentRoutes);
-
 // --- Config GCS (Optional - không bắt buộc) ---
 const GCS_BUCKET = process.env.GCS_BUCKET || 'suaxe-api-2-web';
 let storage, bucket;
@@ -74,6 +71,9 @@ const corsMiddleware = cors({
 
 app.use(corsMiddleware);
 app.options('*', corsMiddleware);
+
+// --- Mount payment routes (sau CORS)
+app.use('/api/payment', paymentRoutes);
 
 // --- Session & Passport (Auth0 ready) ---
 app.use(session({
