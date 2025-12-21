@@ -295,9 +295,10 @@ class Booking {
            // Tạo lịch hẹn - Status dựa theo phương thức thanh toán
             // Chuyển khoản: "Chờ thanh toán" (ẩn) → Admin duyệt → "Pending" (hiện)
             // Tại tiệm: "Pending" luôn
-            const appointmentStatus = (bookingData.paymentMethod === 'Chuyển khoản ngân hàng') 
-                ? 'Chờ thanh toán' 
-                : 'Pending';
+            // const appointmentStatus = (bookingData.paymentMethod === 'Chuyển khoản ngân hàng') 
+            //     ? 'Chờ thanh toán' 
+            //     : 'Pending';
+            const appointmentStatus = 'Pending';
             
             const [appointmentResult] = await connection.query(
                 'INSERT INTO Appointments (UserID, VehicleID, MechanicID, AppointmentDate, Status, Notes, EstimatedEndTime, ServiceDuration, PaymentMethod) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
