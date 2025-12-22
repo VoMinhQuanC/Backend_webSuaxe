@@ -74,9 +74,12 @@ app.use(corsMiddleware);
 app.options('*', corsMiddleware);
 
 // ================================
-// AUTH MIDDLEWARES - MOVED UP!
-// ================================
 const authenticateToken = (req, res, next) => {
+  // Skip auth for CORS preflight OPTIONS request
+  if (req.method === 'OPTIONS') {
+    return next();
+  }
+  
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
   if (!token) return res.status(401).json({ success: false, message: 'Không tìm thấy token' });
