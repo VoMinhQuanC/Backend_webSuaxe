@@ -14,6 +14,7 @@ const Auth0Strategy = require('passport-auth0');
 const { Storage } = require('@google-cloud/storage');
 const multer = require('multer');
 const paymentRoutes = require('./routes/paymentRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
 
 const app = express();
 
@@ -74,6 +75,7 @@ app.options('*', corsMiddleware);
 
 // --- Mount payment routes (sau CORS)
 app.use('/api/payment', paymentRoutes);
+app.use('/api/notification', notificationRoutes);
 
 // --- Session & Passport (Auth0 ready) ---
 app.use(session({
