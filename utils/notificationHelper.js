@@ -1,6 +1,6 @@
 // ================================
-// NOTIFICATION HELPER
-// Tạo notifications dễ dàng
+// NOTIFICATION HELPER - TYPE FIXED
+// Fixed Type ENUM to match database
 // ================================
 
 const mysql = require('mysql2/promise');
@@ -18,23 +18,21 @@ const pool = mysql.createPool({
 });
 
 /**
- * Tạo notification chung
- * @param {Object} params - Notification parameters
- * @returns {Promise<number>} NotificationID
+ * Tạo notification
+ * Type ENUM: booking, payment, system, promotion, reminder, announcement, general
  */
 async function createNotification({
-    userId = null,  // null = broadcast
+    userId = null,
     senderId = null,
     title,
     message,
-    type = 'system',
+    type = 'system',  // ✅ Must be: booking, payment, system, promotion, reminder, announcement, general
     priority = 'normal',
     iconType = 'info',
     actionUrl = null,
     relatedId = null,
     relatedType = null,
-    expiresAt = null,
-    io = null  // Socket.io instance (optional)
+    expiresAt = null
 }) {
     try {
         const [result] = await pool.query(`
@@ -45,32 +43,13 @@ async function createNotification({
         
         const notificationId = result.insertId;
         
-        // Emit socket event if io provided
-        if (io) {
-            const notification = {
-                NotificationID: notificationId,
-                Title: title,
-                Message: message,
-                Type: type,
-                Priority: priority,
-                IconType: iconType,
-                CreatedAt: new Date(),
-                IsRead: false
-            };
-            
-            if (userId) {
-                io.to(`user_${userId}`).emit('new_notification', notification);
-                console.log(`✅ Sent notification to user_${userId}`);
-            } else {
-                io.emit('new_notification', notification);
-                console.log('✅ Broadcast notification to all users');
-            }
-        }
+        console.log(`✅ Notification created: ID=${notificationId}, UserID=${userId}, Type="${type}", Title="${title}"`);
         
         return notificationId;
         
     } catch (error) {
         console.error('❌ Error creating notification:', error);
+        console.error(`   Failed params: userId=${userId}, type=${type}, title=${title}`);
         throw error;
     }
 }
@@ -87,11 +66,9 @@ async function notifyAdmin({
     actionUrl = null,
     relatedId = null,
     relatedType = null,
-    senderId = null,
-    io = null
+    senderId = null
 }) {
     try {
-        // Lấy UserID của admin (RoleID = 1)
         const [admins] = await pool.query('SELECT UserID FROM Users WHERE RoleID = 1');
         
         if (admins.length === 0) {
@@ -112,8 +89,7 @@ async function notifyAdmin({
                 iconType,
                 actionUrl,
                 relatedId,
-                relatedType,
-                io
+                relatedType
             });
             
             notificationIds.push(notificationId);
@@ -141,8 +117,7 @@ async function notifyUser({
     actionUrl = null,
     relatedId = null,
     relatedType = null,
-    senderId = null,
-    io = null
+    senderId = null
 }) {
     return await createNotification({
         userId,
@@ -154,207 +129,141 @@ async function notifyUser({
         iconType,
         actionUrl,
         relatedId,
-        relatedType,
-        io
+        relatedType
     });
 }
-
-/**
- * Gửi notification cho Mechanic cụ thể
- */
-async function notifyMechanic({
-    mechanicId,
-    title,
-    message,
-    type = 'assignment',
-    priority = 'normal',
-    iconType = 'info',
-    actionUrl = null,
-    relatedId = null,
-    relatedType = null,
-    senderId = null,
-    io = null
-}) {
-    return await createNotification({
-        userId: mechanicId,
-        senderId,
-        title,
-        message,
-        type,
-        priority,
-        iconType,
-        actionUrl,
-        relatedId,
-        relatedType,
-        io
-    });
-}
-
-/**
- * Broadcast notification cho tất cả users
- */
-async function broadcastNotification({
-    title,
-    message,
-    type = 'system',
-    priority = 'normal',
-    iconType = 'info',
-    actionUrl = null,
-    expiresAt = null,
-    senderId = null,
-    io = null
-}) {
-    return await createNotification({
-        userId: null,  // NULL = broadcast
-        senderId,
-        title,
-        message,
-        type,
-        priority,
-        iconType,
-        actionUrl,
-        expiresAt,
-        io
-    });
-}
-
-// ================================
-// SPECIFIC NOTIFICATION FUNCTIONS
-// ================================
 
 /**
  * Payment Approved
+ * ✅ FIXED: type = 'payment' (was 'success')
  */
-async function notifyPaymentApproved({ userId, appointmentId, amount, io }) {
+async function notifyPaymentApproved({ userId, appointmentId, amount }) {
     return await notifyUser({
         userId,
         title: 'Thanh toán đã được xác nhận',
         message: `Thanh toán ${amount?.toLocaleString('vi-VN')} đ cho lịch hẹn #${appointmentId} đã được xác nhận`,
-        type: 'success',
+        type: 'payment',      // ✅ FIXED: payment (not success)
         priority: 'high',
-        iconType: 'success',
+        iconType: 'success',  // IconType vẫn là success để hiển thị màu xanh
         relatedId: appointmentId,
-        relatedType: 'appointment',
-        io
+        relatedType: 'appointment'
     });
 }
 
 /**
  * Payment Rejected
+ * ✅ FIXED: type = 'payment' (was 'error')
  */
-async function notifyPaymentRejected({ userId, appointmentId, reason, io }) {
+async function notifyPaymentRejected({ userId, appointmentId, reason }) {
     return await notifyUser({
         userId,
         title: 'Thanh toán bị từ chối',
         message: `Thanh toán cho lịch hẹn #${appointmentId} bị từ chối${reason ? `: ${reason}` : ''}`,
-        type: 'error',
+        type: 'payment',      // ✅ FIXED: payment (not error)
         priority: 'high',
-        iconType: 'error',
+        iconType: 'error',    // IconType vẫn là error để hiển thị màu đỏ
         relatedId: appointmentId,
-        relatedType: 'appointment',
-        io
+        relatedType: 'appointment'
     });
 }
 
 /**
  * New Booking (to Admin)
+ * ✅ FIXED: type = 'booking' (was 'appointment')
  */
-async function notifyNewBooking({ customerName, appointmentId, io }) {
+async function notifyNewBooking({ customerName, appointmentId }) {
     return await notifyAdmin({
         title: 'Đặt lịch mới',
         message: `Khách hàng ${customerName} đã đặt lịch sửa xe #${appointmentId}`,
-        type: 'appointment',
+        type: 'booking',      // ✅ FIXED: booking (not appointment)
         priority: 'normal',
         iconType: 'info',
         actionUrl: '/admin-booking.html',
         relatedId: appointmentId,
-        relatedType: 'appointment',
-        io
-    });
-}
-
-/**
- * Booking Approved
- */
-async function notifyBookingApproved({ userId, appointmentId, io }) {
-    return await notifyUser({
-        userId,
-        title: 'Lịch đã được xác nhận',
-        message: `Lịch hẹn #${appointmentId} của bạn đã được xác nhận`,
-        type: 'success',
-        priority: 'normal',
-        iconType: 'success',
-        relatedId: appointmentId,
-        relatedType: 'appointment',
-        io
-    });
-}
-
-/**
- * Booking Rejected
- */
-async function notifyBookingRejected({ userId, appointmentId, reason, io }) {
-    return await notifyUser({
-        userId,
-        title: 'Lịch bị từ chối',
-        message: `Lịch hẹn #${appointmentId} bị từ chối${reason ? `: ${reason}` : ''}`,
-        type: 'warning',
-        priority: 'high',
-        iconType: 'warning',
-        relatedId: appointmentId,
-        relatedType: 'appointment',
-        io
+        relatedType: 'appointment'
     });
 }
 
 /**
  * Payment Proof Uploaded (to Admin)
  */
-async function notifyPaymentProofUploaded({ customerName, appointmentId, amount, io }) {
+async function notifyPaymentProofUploaded({ customerName, appointmentId, amount }) {
     return await notifyAdmin({
         title: 'Chứng từ thanh toán mới',
         message: `Khách hàng ${customerName} đã upload chứng từ thanh toán ${amount?.toLocaleString('vi-VN')} đ`,
-        type: 'payment',
+        type: 'payment',      // ✅ Already correct
         priority: 'normal',
         iconType: 'info',
         actionUrl: '/admin-booking.html',
         relatedId: appointmentId,
-        relatedType: 'appointment',
-        io
+        relatedType: 'appointment'
+    });
+}
+
+/**
+ * Booking Approved (to User)
+ * ✅ FIXED: type = 'booking' (was 'success')
+ */
+async function notifyBookingApproved({ userId, appointmentId }) {
+    return await notifyUser({
+        userId,
+        title: 'Lịch đã được xác nhận',
+        message: `Lịch hẹn #${appointmentId} của bạn đã được xác nhận`,
+        type: 'booking',      // ✅ FIXED: booking (not success)
+        priority: 'normal',
+        iconType: 'success',
+        relatedId: appointmentId,
+        relatedType: 'appointment'
+    });
+}
+
+/**
+ * Booking Rejected (to User)
+ * ✅ FIXED: type = 'booking' (was 'warning')
+ */
+async function notifyBookingRejected({ userId, appointmentId, reason }) {
+    return await notifyUser({
+        userId,
+        title: 'Lịch bị từ chối',
+        message: `Lịch hẹn #${appointmentId} bị từ chối${reason ? `: ${reason}` : ''}`,
+        type: 'booking',      // ✅ FIXED: booking (not warning)
+        priority: 'high',
+        iconType: 'warning',
+        relatedId: appointmentId,
+        relatedType: 'appointment'
     });
 }
 
 /**
  * Service Completed
+ * ✅ FIXED: type = 'system' (was 'success')
  */
-async function notifyServiceCompleted({ userId, appointmentId, io }) {
+async function notifyServiceCompleted({ userId, appointmentId }) {
     return await notifyUser({
         userId,
         title: 'Dịch vụ hoàn thành',
         message: `Xe của bạn đã được sửa xong. Vui lòng đến nhận xe.`,
-        type: 'success',
+        type: 'system',       // ✅ FIXED: system (not success)
         priority: 'high',
         iconType: 'success',
         relatedId: appointmentId,
-        relatedType: 'appointment',
-        io
+        relatedType: 'appointment'
     });
 }
 
 /**
  * Appointment Reminder
  */
-async function notifyAppointmentReminder({ userId, appointmentId, appointmentTime, io }) {
+async function notifyAppointmentReminder({ userId, appointmentId, appointmentTime }) {
     return await notifyUser({
         userId,
         title: 'Nhắc lịch hẹn',
         message: `Bạn có lịch hẹn vào ${appointmentTime}`,
-        type: 'reminder',
+        type: 'reminder',     // ✅ Already correct
         priority: 'high',
         iconType: 'warning',
         relatedId: appointmentId,
-        relatedType: 'appointment',
-        io
+        relatedType: 'appointment'
     });
 }
 
@@ -365,16 +274,17 @@ module.exports = {
     createNotification,
     notifyAdmin,
     notifyUser,
-    notifyMechanic,
-    broadcastNotification,
-    
-    // Specific functions
     notifyPaymentApproved,
     notifyPaymentRejected,
     notifyNewBooking,
+    notifyPaymentProofUploaded,
     notifyBookingApproved,
     notifyBookingRejected,
-    notifyPaymentProofUploaded,
     notifyServiceCompleted,
     notifyAppointmentReminder
 };
+
+// ================================
+// TYPE ENUM VALUES (Database):
+// ================================
+// booking, payment, system, promotion, reminder, announcement, general

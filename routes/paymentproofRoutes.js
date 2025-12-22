@@ -693,13 +693,13 @@ router.post('/admin/approve/:proofId', authenticateToken, checkAdminAccess, asyn
             
             if (appointments.length > 0) {
                 const userId = appointments[0].UserID;
-                const io = req.app.get('io');
+                // const io = req.app.get('io'); // Loại 
                 
                 await notificationHelper.notifyPaymentApproved({
                     userId: userId,
                     appointmentId: proof.AppointmentID,
                     amount: proof.Amount,
-                    io: io
+                    // io: io
                 });
                 
                 console.log(`✅ Notification sent to user ${userId}`);
