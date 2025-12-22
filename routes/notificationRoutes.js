@@ -1,5 +1,5 @@
 // ================================
-// NOTIFICATION ROUTES - PHÙ HỢP VỚI DATABASE HIỆN TẠI
+// NOTIFICATION ROUTES - FIXED JWT FIELDS
 // File: routes/notificationRoutes.js
 // ================================
 
@@ -27,7 +27,8 @@ const pool = mysql.createPool({
 // ================================
 router.get('/', async (req, res) => {
     try {
-        const userId = req.user?.id || req.user?.UserID;
+        // FIXED: Check userId field first (from JWT payload)
+        const userId = req.user?.userId || req.user?.id || req.user?.UserID;
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 20;
         const offset = (page - 1) * limit;
@@ -108,7 +109,8 @@ router.get('/', async (req, res) => {
 // ================================
 router.get('/unread-count', async (req, res) => {
     try {
-        const userId = req.user?.id || req.user?.UserID;
+        // FIXED: Check userId field first
+        const userId = req.user?.userId || req.user?.id || req.user?.UserID;
         
         if (!userId) {
             return res.status(401).json({
@@ -147,7 +149,8 @@ router.get('/unread-count', async (req, res) => {
 // ================================
 router.put('/:id/read', async (req, res) => {
     try {
-        const userId = req.user?.id || req.user?.UserID;
+        // FIXED: Check userId field first
+        const userId = req.user?.userId || req.user?.id || req.user?.UserID;
         const notificationId = req.params.id;
         
         if (!userId) {
@@ -187,7 +190,8 @@ router.put('/:id/read', async (req, res) => {
 // ================================
 router.put('/read-all', async (req, res) => {
     try {
-        const userId = req.user?.id || req.user?.UserID;
+        // FIXED: Check userId field first
+        const userId = req.user?.userId || req.user?.id || req.user?.UserID;
         
         if (!userId) {
             return res.status(401).json({
@@ -225,7 +229,8 @@ router.put('/read-all', async (req, res) => {
 // ================================
 router.delete('/:id', async (req, res) => {
     try {
-        const userId = req.user?.id || req.user?.UserID;
+        // FIXED: Check userId field first
+        const userId = req.user?.userId || req.user?.id || req.user?.UserID;
         const notificationId = req.params.id;
         
         if (!userId) {
@@ -264,8 +269,9 @@ router.delete('/:id', async (req, res) => {
 // ================================
 router.post('/send', async (req, res) => {
     try {
-        const adminId = req.user?.id || req.user?.UserID;
-        const adminRoleId = req.user?.roleId || req.user?.RoleID;
+        // FIXED: Check userId and role fields
+        const adminId = req.user?.userId || req.user?.id || req.user?.UserID;
+        const adminRoleId = req.user?.role || req.user?.roleId || req.user?.RoleID;
         
         // Check admin permission (RoleID = 1 là Admin)
         if (!adminId || adminRoleId !== 1) {
@@ -353,9 +359,9 @@ module.exports = router;
 
 // ================================
 // NOTES:
+// - FIXED: JWT payload uses userId, role (not id, UserID, RoleID)
 // - Tương thích với database schema hiện tại (websuaxe)
 // - RoleID = 1 là Admin
 // - UserID NULL = broadcast
 // - Soft delete với IsDeleted flag
-// - Không có data cứng - tất cả từ API
 // ================================
