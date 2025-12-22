@@ -75,7 +75,7 @@ app.options('*', corsMiddleware);
 
 // --- Mount payment routes (sau CORS)
 app.use('/api/payment', paymentRoutes);
-app.use('/api/notification', notificationRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // --- Session & Passport (Auth0 ready) ---
 app.use(session({
