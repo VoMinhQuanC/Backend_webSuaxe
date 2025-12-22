@@ -172,12 +172,12 @@ const pool = mysql.createPool({
     req.user = user;
     next();
   });
-};
+;
 
 // MOVED UP - const checkAdminAccess = (req, res, next) => {
   if (req.user && req.user.role === 1) return next();
   return res.status(403).json({ success: false, message: 'Không có quyền truy cập. Yêu cầu quyền admin.' });
-};
+;
 
 // --- Mount modular routes if exist (non-blocking) ---
 try { const authRoutes = require('./routes/authRoutes'); if (authRoutes.router) app.use('/api/auth', authRoutes.router); } catch (e) {}
