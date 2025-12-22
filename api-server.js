@@ -73,9 +73,29 @@ const corsMiddleware = cors({
 app.use(corsMiddleware);
 app.options('*', corsMiddleware);
 
+// ================================
+// AUTH MIDDLEWARES - MOVED UP!
+// ================================
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) return res.status(401).json({ success: false, message: 'Không tìm thấy token' });
+  jwt.verify(token, process.env.JWT_SECRET || 'sua_xe_secret_key', (err, user) => {
+    if (err) return res.status(403).json({ success: false, message: 'Token không hợp lệ hoặc đã hết hạn' });
+    req.user = user;
+    next();
+  });
+};
+
+const checkAdminAccess = (req, res, next) => {
+  if (req.user && req.user.role === 1) return next();
+  return res.status(403).json({ success: false, message: 'Không có quyền truy cập. Yêu cầu quyền admin.' });
+};
+
+
 // --- Mount payment routes (sau CORS)
 app.use('/api/payment', paymentRoutes);
-app.use('/api/notifications', notificationRoutes);
+app.use('/api/notifications', authenticateToken, notificationRoutes); // FIXED: Added auth
 
 // --- Session & Passport (Auth0 ready) ---
 app.use(session({
@@ -140,7 +160,7 @@ const pool = mysql.createPool({
 })();
 
 // --- Auth middlewares ---
-const authenticateToken = (req, res, next) => {
+// MOVED UP - const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
   if (!token) return res.status(401).json({ success: false, message: 'Không tìm thấy token' });
@@ -151,7 +171,7 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-const checkAdminAccess = (req, res, next) => {
+// MOVED UP - const checkAdminAccess = (req, res, next) => {
   if (req.user && req.user.role === 1) return next();
   return res.status(403).json({ success: false, message: 'Không có quyền truy cập. Yêu cầu quyền admin.' });
 };
