@@ -353,9 +353,10 @@ router.post('/appointments', authenticateToken, async (req, res) => {
         // console.log("Processed booking data for DB:", bookingData);
         
         
+        
         const result = await Booking.createAppointment(bookingData);
         
-        // ✅ TẠO NOTIFICATION CHO ADMIN
+        // ✅ TẠO NOTIFICATION CHO ADMIN VÀ USER
         try {
             // Lấy thông tin customer
             const [users] = await pool.query(
@@ -365,15 +366,29 @@ router.post('/appointments', authenticateToken, async (req, res) => {
             
             if (users.length > 0) {
                 const customerName = users[0].FullName;
-                const io = req.app.get('io');
                 
-                await notificationHelper.notifyNewBooking({
+                // Chuẩn bị thông tin services
+                let serviceNames = null;
+                if (services && Array.isArray(services)) {
+                    const serviceIds = services.map(s => s.serviceId || s.ServiceID).filter(Boolean);
+                    if (serviceIds.length > 0) {
+                        const [serviceData] = await pool.query(
+                            'SELECT ServiceName FROM Services WHERE ServiceID IN (?)',
+                            [serviceIds]
+                        );
+                        serviceNames = serviceData.map(s => s.ServiceName).join(', ');
+                    }
+                }
+                
+                await notificationHelper.notifyBookingCreated({
+                    userId: userId,
                     customerName: customerName,
                     appointmentId: result.appointmentId,
-                    io: io
+                    appointmentDate: bookingData.appointmentDate || null,
+                    services: serviceNames
                 });
                 
-                console.log(`✅ Notification sent to admin for new booking #${result.appointmentId}`);
+                console.log(`✅ Booking creation notifications sent for #${result.appointmentId}`);
             }
         } catch (notifError) {
             console.error('❌ Error sending notification:', notifError);
@@ -393,6 +408,7 @@ router.post('/appointments', authenticateToken, async (req, res) => {
             message: 'Lỗi server: ' + err.message 
         });
     }
+    
 });
 
 // API: Lấy slot thời gian khả dụng

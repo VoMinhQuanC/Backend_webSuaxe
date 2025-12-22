@@ -275,8 +275,35 @@ router.post('/upload', authenticateToken, upload.single('proofImage'), async (re
 
         await connection.commit();
 
-        console.log(`✅ Payment proof uploaded successfully: ${proofId}`);
+        // ✅ GỬI NOTIFICATION CHO USER VÀ ADMIN
+        try {
+            // Query thông tin user và appointment
+            const [users] = await connection.query(
+                'SELECT FullName FROM Users WHERE UserID = ?',
+                [userId]
+            );
+            
+            const [appointmentInfo] = await connection.query(
+                'SELECT TotalAmount FROM Appointments a WHERE a.AppointmentID = ?',
+                [appointmentId]
+            );
+            
+            if (users.length > 0 && appointmentInfo.length > 0) {
+                await notificationHelper.notifyPaymentProofUploaded({
+                    userId: userId,
+                    customerName: users[0].FullName,
+                    appointmentId: appointmentId,
+                    amount: appointmentInfo[0].TotalAmount || totalAmount
+                });
+                
+                console.log(`✅ Payment proof upload notifications sent for appointment #${appointmentId}`);
+            }
+        } catch (notifError) {
+            console.error('❌ Error sending notification:', notifError);
+            // Không throw - notification fail không nên block upload
+        }
 
+        console.log(`✅ Payment proof uploaded successfully: ${proofId}`);
         res.json({
             success: true,
             message: 'Upload chứng từ thành công',
