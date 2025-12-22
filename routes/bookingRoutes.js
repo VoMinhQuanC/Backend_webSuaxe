@@ -6,6 +6,7 @@ const Booking = require('../models/Booking');
 const Service = require('../models/Service');
 const { pool } = require('../db');
 const { authenticateToken } = require('./authRoutes');
+const notificationHelper = require('../utils/notificationHelper'); // ✅ ADD NOTIFICATION HELPER
 
 // API: Lấy tất cả lịch hẹn (cần quyền admin)
 router.get('/appointments', authenticateToken, async (req, res) => {
@@ -351,7 +352,33 @@ router.post('/appointments', authenticateToken, async (req, res) => {
         // Log thêm thông tin để debug
         // console.log("Processed booking data for DB:", bookingData);
         
+        
         const result = await Booking.createAppointment(bookingData);
+        
+        // ✅ TẠO NOTIFICATION CHO ADMIN
+        try {
+            // Lấy thông tin customer
+            const [users] = await pool.query(
+                'SELECT FullName FROM Users WHERE UserID = ?',
+                [userId]
+            );
+            
+            if (users.length > 0) {
+                const customerName = users[0].FullName;
+                const io = req.app.get('io');
+                
+                await notificationHelper.notifyNewBooking({
+                    customerName: customerName,
+                    appointmentId: result.appointmentId,
+                    io: io
+                });
+                
+                console.log(`✅ Notification sent to admin for new booking #${result.appointmentId}`);
+            }
+        } catch (notifError) {
+            console.error('❌ Error sending notification:', notifError);
+            // Không throw error - notification fail không nên block booking
+        }
         
         res.status(201).json({
             success: true,

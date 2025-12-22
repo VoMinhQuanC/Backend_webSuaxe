@@ -7,6 +7,7 @@ const multer = require('multer');
 const { pool } = require('../db');
 const { authenticateToken } = require('./authRoutes');
 
+const notificationHelper = require('../utils/notificationHelper'); // ✅ ADD NOTIFICATION HELPER
 // ============ CLOUDINARY CONFIG ============
 // Nếu chưa có file config/cloudinary.js, dùng inline config
 let cloudinary;
@@ -682,8 +683,31 @@ router.post('/admin/approve/:proofId', authenticateToken, checkAdminAccess, asyn
 
         console.log(`✅ Payment proof approved: ${proofId} by admin ${adminId}`);
 
-        // TODO: Emit socket event để notify customer
-        // socketService.emitPaymentApproved(proof.AppointmentID);
+        // ✅ TẠO NOTIFICATION CHO USER
+        try {
+            // Lấy UserID từ Appointment
+            const [appointments] = await connection.query(
+                'SELECT UserID FROM Appointments WHERE AppointmentID = ?',
+                [proof.AppointmentID]
+            );
+            
+            if (appointments.length > 0) {
+                const userId = appointments[0].UserID;
+                const io = req.app.get('io');
+                
+                await notificationHelper.notifyPaymentApproved({
+                    userId: userId,
+                    appointmentId: proof.AppointmentID,
+                    amount: proof.Amount,
+                    io: io
+                });
+                
+                console.log(`✅ Notification sent to user ${userId}`);
+            }
+        } catch (notifError) {
+            console.error('❌ Error sending notification:', notifError);
+            // Không throw error - notification fail không nên block payment approval
+        }
 
         res.json({
             success: true,
@@ -758,8 +782,31 @@ router.post('/admin/reject/:proofId', authenticateToken, checkAdminAccess, async
 
         console.log(`❌ Payment proof rejected: ${proofId} by admin ${adminId}`);
 
-        // TODO: Emit socket event để notify customer
-        // socketService.emitPaymentRejected(proof.AppointmentID, reason);
+        console.log(`❌ Payment proof rejected: ${proofId} by admin ${adminId}`);
+
+        // ✅ TẠO NOTIFICATION CHO USER
+        try {
+            const [appointments] = await pool.query(
+                'SELECT UserID FROM Appointments WHERE AppointmentID = ?',
+                [proof.AppointmentID]
+            );
+            
+            if (appointments.length > 0) {
+                const userId = appointments[0].UserID;
+                const io = req.app.get('io');
+                
+                await notificationHelper.notifyPaymentRejected({
+                    userId: userId,
+                    appointmentId: proof.AppointmentID,
+                    reason: reason,
+                    io: io
+                });
+                
+                console.log(`✅ Notification sent to user ${userId}`);
+            }
+        } catch (notifError) {
+            console.error('❌ Error sending notification:', notifError);
+        }
 
         res.json({
             success: true,
