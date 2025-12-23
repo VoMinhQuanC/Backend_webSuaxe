@@ -74,6 +74,10 @@ const corsMiddleware = cors({
 app.use(corsMiddleware);
 app.options('*', corsMiddleware);
 
+// ✅ FIXED: JSON Parser PHẢI Ở ĐÂY (TRƯỚC routes)
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
 // ================================
 const authenticateToken = (req, res, next) => {
   // Skip auth for CORS preflight OPTIONS request
@@ -99,7 +103,7 @@ const checkAdminAccess = (req, res, next) => {
 
 // --- Mount payment routes (sau CORS)
 app.use('/api/payment', paymentRoutes);
-app.use('/api/notifications', authenticateToken, notificationRoutes); // FIXED: Added auth
+app.use('/api/notifications', notificationRoutes);
 app.use('/api/fcm', fcmRoutes);
 
 console.log('✅ fcmRoutes loaded successfully');
@@ -159,9 +163,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// --- Parser ---
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+// ✅ REMOVED: Parser đã được di chuyển lên trên (sau CORS, trước routes)
 
 // --- MySQL Pool - ĐÃ SỬA: Hỗ trợ Railway (MYSQL*) và fallback (DB_*) ---
 const pool = mysql.createPool({
@@ -478,19 +480,6 @@ app.delete('/api/vehicles/:id', authenticateToken, async (req, res) => {
       });
     }
     
-    // Kiểm tra xe có đang được dùng trong appointment không
-    const [appointments] = await pool.query(
-      'SELECT COUNT(*) as count FROM Appointments WHERE VehicleID = ?',
-      [vehicleId]
-    );
-    
-    if (appointments[0].count > 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Không thể xóa xe đang có lịch hẹn'
-      });
-    }
-    
     // Xóa xe
     await pool.query('DELETE FROM Vehicles WHERE VehicleID = ?', [vehicleId]);
     
@@ -507,51 +496,26 @@ app.delete('/api/vehicles/:id', authenticateToken, async (req, res) => {
   }
 });
 
-console.log('✅ Vehicle API loaded successfully (inline)');
-// ================= END VEHICLE API =================
+console.log('✅ Vehicle API routes loaded');
 
-// ---------------- Core endpoints (copied/merged) ----------------
-
-// API test
-app.get('/api/test', (req, res) => {
-  res.json({ success: true, message: 'API đang hoạt động!', env: process.env.NODE_ENV, time: new Date().toISOString() });
-});
-
-// DB test
-app.get('/api/db-test', async (req, res) => {
-  try {
-    const [rows] = await pool.query('SELECT 1 as test');
-    res.json({ success: true, message: 'Kết nối DB OK', data: rows });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: 'Lỗi DB: ' + err.message });
-  }
-});
-
-// ================= Image upload -> Google Cloud Storage =================
-// POST /api/images/upload
-// form-data: image (file), folder (optional: avatars|services|service-carousel)
+// ================= Upload Images (GCS) =================
 app.post('/api/images/upload', authenticateToken, upload.single('image'), async (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).json({ success: false, message: 'Không có file được upload' });
+      return res.status(400).json({ success: false, message: 'Không tìm thấy file upload' });
     }
 
-    const folder = req.body.folder || 'services';
-    const allowedFolders = ['avatars', 'services', 'service-carousel'];
-    if (!allowedFolders.includes(folder)) {
-      return res.status(400).json({ success: false, message: 'Folder không hợp lệ' });
-    }
-
-    const originalName = req.file.originalname;
-    const fileExt = path.extname(originalName);
+    // Tạo tên file duy nhất
+    const originalName = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
     const timestamp = Date.now();
-    const randomStr = Math.random().toString(36).substring(2, 8);
-    const safeFilename = `${timestamp}-${randomStr}${fileExt}`;
+    const filename = `${timestamp}_${originalName}`;
 
-    const destination = `${folder}/${safeFilename}`;
+    // Folder tùy chọn (lấy từ query hoặc default 'general')
+    const folder = req.query.folder || 'general';
+    const destination = `${folder}/${filename}`;
+
+    // Upload lên GCS
     const file = bucket.file(destination);
-
     const stream = file.createWriteStream({
       metadata: {
         contentType: req.file.mimetype
