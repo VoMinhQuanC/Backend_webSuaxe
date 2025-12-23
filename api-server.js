@@ -100,7 +100,7 @@ const checkAdminAccess = (req, res, next) => {
 // --- Mount payment routes (sau CORS)
 app.use('/api/payment', paymentRoutes);
 app.use('/api/notifications', authenticateToken, notificationRoutes); // FIXED: Added auth
-app.use('/api/fcm', fcmRoutes); 
+app.use('/api/notifications', fcmRoutes);  // ← FCM routes (có auth riêng trong file)
 
 console.log('✅ fcmRoutes loaded successfully');
 console.log('✅ mechanicNotificationHelper loaded successfully');
