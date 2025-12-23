@@ -15,7 +15,8 @@ const { Storage } = require('@google-cloud/storage');
 const multer = require('multer');
 const paymentRoutes = require('./routes/paymentRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
-
+const fcmRoutes = require('./routes/fcmRoutes');
+const mechanicNotificationHelper = require('./routes/mechanicNotificationHelper');
 const app = express();
 
 // --- Config GCS (Optional - không bắt buộc) ---
@@ -99,6 +100,10 @@ const checkAdminAccess = (req, res, next) => {
 // --- Mount payment routes (sau CORS)
 app.use('/api/payment', paymentRoutes);
 app.use('/api/notifications', authenticateToken, notificationRoutes); // FIXED: Added auth
+app.use('/api/notifications', fcmRoutes);  // ← FCM routes (có auth riêng trong file)
+
+console.log('✅ fcmRoutes loaded successfully');
+console.log('✅ mechanicNotificationHelper loaded successfully');
 
 // --- Session & Passport (Auth0 ready) ---
 app.use(session({
