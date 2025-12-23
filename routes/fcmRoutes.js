@@ -11,12 +11,12 @@ const admin = require('firebase-admin');
 
 // ✅ TODO: Thay bằng service account key của bạn
 // Tải từ: Firebase Console > Project Settings > Service Accounts > Generate new private key
-// const serviceAccount = require('../config/firebase-service-account.json');
+const serviceAccount = require('../config/firebase-service-account.json');
 
 // ✅ Initialize Firebase Admin (chỉ cần làm 1 lần)
-// admin.initializeApp({
-//   credential: admin.credential.cert(serviceAccount),
-// });
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
 
 /**
  * API: Lưu FCM token của user
