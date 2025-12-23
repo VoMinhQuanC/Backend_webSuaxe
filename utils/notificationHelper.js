@@ -1,6 +1,6 @@
 // ================================
-// NOTIFICATION HELPER - COMPLETE WORKFLOW
-// Tất cả các bước: Booking → Confirmed → InProgress → Completed
+// NOTIFICATION HELPER - WITH MECHANIC SUPPORT
+// Complete workflow for Admin, User, và Mechanic
 // ================================
 
 const mysql = require('mysql2/promise');
@@ -132,16 +132,44 @@ async function notifyUser({
     });
 }
 
+/**
+ * Gửi notification cho Mechanic cụ thể
+ */
+async function notifyMechanic({
+    mechanicId,
+    title,
+    message,
+    type = 'system',
+    priority = 'normal',
+    iconType = 'info',
+    actionUrl = null,
+    relatedId = null,
+    relatedType = null,
+    senderId = null
+}) {
+    return await createNotification({
+        userId: mechanicId,
+        senderId,
+        title,
+        message,
+        type,
+        priority,
+        iconType,
+        actionUrl,
+        relatedId,
+        relatedType
+    });
+}
+
 // ================================
 // BOOKING WORKFLOW NOTIFICATIONS
 // ================================
 
 /**
  * STEP 1: User Created Booking
- * Status: PendingApproval (ẨN)
- * Gửi cho: USER (confirm) + ADMIN (alert)
+ * Gửi cho: USER (confirm) + ADMIN (alert) + MECHANIC (nếu đã assign)
  */
-async function notifyBookingCreated({ userId, customerName, appointmentId, appointmentDate, services }) {
+async function notifyBookingCreated({ userId, customerName, appointmentId, appointmentDate, services, mechanicId }) {
     try {
         // Notification cho USER
         await notifyUser({
@@ -167,6 +195,22 @@ async function notifyBookingCreated({ userId, customerName, appointmentId, appoi
             relatedType: 'appointment'
         });
         
+        // Notification cho MECHANIC (nếu đã assign)
+        if (mechanicId) {
+            await notifyMechanic({
+                mechanicId,
+                title: '🔧 Lịch hẹn mới được phân công',
+                message: `Bạn được phân công sửa xe cho khách hàng ${customerName} (Lịch hẹn #${appointmentId})${appointmentDate ? ` - ${appointmentDate}` : ''}${services ? ` - ${services}` : ''}`,
+                type: 'booking',
+                priority: 'normal',
+                iconType: 'info',
+                actionUrl: '/mechanic-appointments.html',
+                relatedId: appointmentId,
+                relatedType: 'appointment'
+            });
+            console.log(`✅ Mechanic notification sent to mechanic #${mechanicId}`);
+        }
+        
         console.log(`✅ Booking creation notifications sent for appointment #${appointmentId}`);
         
     } catch (error) {
@@ -176,83 +220,196 @@ async function notifyBookingCreated({ userId, customerName, appointmentId, appoi
 }
 
 /**
- * STEP 2: Admin Confirmed Booking
- * Status: PendingApproval → Confirmed (HIỆN)
- * Gửi cho: USER
+ * STEP 2: Admin Confirmed Booking  
+ * Gửi cho: USER + MECHANIC (nếu có)
  */
-async function notifyBookingConfirmed({ userId, appointmentId, appointmentDate, garage, mechanicName }) {
-    return await notifyUser({
-        userId,
-        title: '✅ Lịch hẹn đã được xác nhận',
-        message: `Lịch hẹn #${appointmentId} đã được xác nhận!${appointmentDate ? ` 📅 Thời gian: ${appointmentDate}.` : ''}${mechanicName ? ` 👨‍🔧 Kỹ thuật viên: ${mechanicName}.` : ''} Vui lòng đến đúng giờ nhé!`,
-        type: 'booking',
-        priority: 'high',
-        iconType: 'success',
-        relatedId: appointmentId,
-        relatedType: 'appointment'
-    });
+async function notifyBookingConfirmed({ userId, appointmentId, appointmentDate, garage, mechanicId, mechanicName }) {
+    try {
+        // Notification cho USER
+        await notifyUser({
+            userId,
+            title: '✅ Lịch hẹn đã được xác nhận',
+            message: `Lịch hẹn #${appointmentId} đã được xác nhận!${appointmentDate ? ` 📅 Thời gian: ${appointmentDate}.` : ''}${mechanicName ? ` 👨‍🔧 Kỹ thuật viên: ${mechanicName}.` : ''} Vui lòng đến đúng giờ nhé!`,
+            type: 'booking',
+            priority: 'high',
+            iconType: 'success',
+            relatedId: appointmentId,
+            relatedType: 'appointment'
+        });
+        
+        // Notification cho MECHANIC (nếu có)
+        if (mechanicId) {
+            await notifyMechanic({
+                mechanicId,
+                title: '✅ Lịch hẹn đã xác nhận',
+                message: `Lịch hẹn #${appointmentId} đã được xác nhận. Vui lòng chuẩn bị tiếp nhận xe.${appointmentDate ? ` 📅 Thời gian: ${appointmentDate}.` : ''}`,
+                type: 'booking',
+                priority: 'high',
+                iconType: 'success',
+                actionUrl: '/mechanic-appointments.html',
+                relatedId: appointmentId,
+                relatedType: 'appointment'
+            });
+            console.log(`✅ Mechanic notification sent to mechanic #${mechanicId}`);
+        }
+        
+        console.log(`✅ Booking confirmation notifications sent for appointment #${appointmentId}`);
+        
+    } catch (error) {
+        console.error('❌ Error sending booking confirmation notifications:', error);
+        throw error;
+    }
 }
 
 /**
  * STEP 3: Service Started (InProgress)
- * Status: Confirmed → InProgress
- * Gửi cho: USER
+ * Gửi cho: USER + MECHANIC
  */
-async function notifyServiceInProgress({ userId, appointmentId, mechanicName }) {
-    return await notifyUser({
-        userId,
-        title: '🔧 Đang sửa xe',
-        message: `Xe của bạn đang được xử lý (Lịch hẹn #${appointmentId}).${mechanicName ? ` Kỹ thuật viên ${mechanicName} đang làm việc.` : ''} Chúng tôi sẽ thông báo khi hoàn thành.`,
-        type: 'booking',
-        priority: 'normal',
-        iconType: 'info',
-        relatedId: appointmentId,
-        relatedType: 'appointment'
-    });
+async function notifyServiceInProgress({ userId, appointmentId, mechanicId, mechanicName }) {
+    try {
+        // Notification cho USER
+        await notifyUser({
+            userId,
+            title: '🔧 Đang sửa xe',
+            message: `Xe của bạn đang được xử lý (Lịch hẹn #${appointmentId}).${mechanicName ? ` Kỹ thuật viên ${mechanicName} đang làm việc.` : ''} Chúng tôi sẽ thông báo khi hoàn thành.`,
+            type: 'booking',
+            priority: 'normal',
+            iconType: 'info',
+            relatedId: appointmentId,
+            relatedType: 'appointment'
+        });
+        
+        // Notification cho MECHANIC
+        if (mechanicId) {
+            await notifyMechanic({
+                mechanicId,
+                title: '🔧 Bắt đầu sửa xe',
+                message: `Lịch hẹn #${appointmentId} đã chuyển sang trạng thái "Đang sửa". Vui lòng cập nhật tiến độ thường xuyên.`,
+                type: 'booking',
+                priority: 'normal',
+                iconType: 'info',
+                actionUrl: '/mechanic-appointments.html',
+                relatedId: appointmentId,
+                relatedType: 'appointment'
+            });
+            console.log(`✅ Mechanic notification sent to mechanic #${mechanicId}`);
+        }
+        
+        console.log(`✅ Service in-progress notifications sent for appointment #${appointmentId}`);
+        
+    } catch (error) {
+        console.error('❌ Error sending in-progress notifications:', error);
+        throw error;
+    }
 }
 
 /**
  * STEP 4: Service Completed
- * Status: InProgress → Completed
- * Gửi cho: USER
+ * Gửi cho: USER + MECHANIC
  */
-async function notifyServiceCompleted({ userId, appointmentId, totalAmount, paymentMethod }) {
-    const paymentInfo = paymentMethod === 'Chuyển khoản ngân hàng' 
-        ? 'Vui lòng kiểm tra thông tin thanh toán.' 
-        : totalAmount 
-            ? `💰 Tổng tiền: ${totalAmount.toLocaleString('vi-VN')}đ. Vui lòng thanh toán tại quầy.`
-            : 'Vui lòng thanh toán tại quầy.';
-    
-    return await notifyUser({
-        userId,
-        title: '🎉 Dịch vụ hoàn thành',
-        message: `Xe của bạn đã được sửa xong (Lịch hẹn #${appointmentId}). ${paymentInfo} Cảm ơn bạn đã sử dụng dịch vụ!`,
-        type: 'booking',
-        priority: 'high',
-        iconType: 'success',
-        relatedId: appointmentId,
-        relatedType: 'appointment'
-    });
+async function notifyServiceCompleted({ userId, appointmentId, mechanicId, totalAmount, paymentMethod }) {
+    try {
+        const paymentInfo = paymentMethod === 'Chuyển khoản ngân hàng' 
+            ? 'Vui lòng kiểm tra thông tin thanh toán.' 
+            : totalAmount 
+                ? `💰 Tổng tiền: ${totalAmount.toLocaleString('vi-VN')}đ. Vui lòng thanh toán tại quầy.`
+                : 'Vui lòng thanh toán tại quầy.';
+        
+        // Notification cho USER
+        await notifyUser({
+            userId,
+            title: '🎉 Dịch vụ hoàn thành',
+            message: `Xe của bạn đã được sửa xong (Lịch hẹn #${appointmentId}). ${paymentInfo} Cảm ơn bạn đã sử dụng dịch vụ!`,
+            type: 'booking',
+            priority: 'high',
+            iconType: 'success',
+            relatedId: appointmentId,
+            relatedType: 'appointment'
+        });
+        
+        // Notification cho MECHANIC
+        if (mechanicId) {
+            await notifyMechanic({
+                mechanicId,
+                title: '🎉 Hoàn thành lịch hẹn',
+                message: `Lịch hẹn #${appointmentId} đã hoàn thành. Cảm ơn bạn đã hoàn thành tốt công việc!`,
+                type: 'booking',
+                priority: 'normal',
+                iconType: 'success',
+                actionUrl: '/mechanic-appointments.html',
+                relatedId: appointmentId,
+                relatedType: 'appointment'
+            });
+            console.log(`✅ Mechanic completion notification sent to mechanic #${mechanicId}`);
+        }
+        
+        console.log(`✅ Service completion notifications sent for appointment #${appointmentId}`);
+        
+    } catch (error) {
+        console.error('❌ Error sending completion notifications:', error);
+        throw error;
+    }
 }
 
 /**
  * STEP 5: Booking Rejected/Canceled
- * Status: Any → Rejected/Canceled
- * Gửi cho: USER
  */
-async function notifyBookingRejected({ userId, appointmentId, reason, status }) {
-    const titleMap = {
-        'Rejected': '❌ Lịch hẹn bị từ chối',
-        'Canceled': '⚠️ Lịch hẹn đã bị hủy'
-    };
-    
-    return await notifyUser({
-        userId,
-        title: titleMap[status] || '⚠️ Lịch hẹn đã bị hủy',
-        message: `Lịch hẹn #${appointmentId} đã bị ${status === 'Rejected' ? 'từ chối' : 'hủy'}${reason ? `: ${reason}` : ''}. Vui lòng đặt lịch khác hoặc liên hệ chúng tôi để được hỗ trợ.`,
+async function notifyBookingRejected({ userId, appointmentId, mechanicId, reason, status }) {
+    try {
+        const titleMap = {
+            'Rejected': '❌ Lịch hẹn bị từ chối',
+            'Canceled': '⚠️ Lịch hẹn đã bị hủy'
+        };
+        
+        // Notification cho USER
+        await notifyUser({
+            userId,
+            title: titleMap[status] || '⚠️ Lịch hẹn đã bị hủy',
+            message: `Lịch hẹn #${appointmentId} đã bị ${status === 'Rejected' ? 'từ chối' : 'hủy'}${reason ? `: ${reason}` : ''}. Vui lòng đặt lịch khác hoặc liên hệ chúng tôi để được hỗ trợ.`,
+            type: 'booking',
+            priority: 'high',
+            iconType: 'warning',
+            relatedId: appointmentId,
+            relatedType: 'appointment'
+        });
+        
+        // Notification cho MECHANIC (nếu có)
+        if (mechanicId) {
+            await notifyMechanic({
+                mechanicId,
+                title: titleMap[status] || '⚠️ Lịch hẹn đã bị hủy',
+                message: `Lịch hẹn #${appointmentId} đã bị ${status === 'Rejected' ? 'từ chối' : 'hủy'}${reason ? `: ${reason}` : ''}.`,
+                type: 'booking',
+                priority: 'normal',
+                iconType: 'warning',
+                actionUrl: '/mechanic-appointments.html',
+                relatedId: appointmentId,
+                relatedType: 'appointment'
+            });
+            console.log(`✅ Mechanic rejection notification sent to mechanic #${mechanicId}`);
+        }
+        
+        console.log(`✅ Booking rejection notifications sent for appointment #${appointmentId}`);
+        
+    } catch (error) {
+        console.error('❌ Error sending rejection notifications:', error);
+        throw error;
+    }
+}
+
+/**
+ * MECHANIC ASSIGNED: Admin assigns mechanic to appointment
+ * Gửi cho: MECHANIC
+ */
+async function notifyMechanicAssigned({ mechanicId, mechanicName, appointmentId, customerName, appointmentDate, services }) {
+    return await notifyMechanic({
+        mechanicId,
+        title: '👨‍🔧 Phân công lịch hẹn mới',
+        message: `Bạn được phân công sửa xe cho khách hàng ${customerName} (Lịch hẹn #${appointmentId})${appointmentDate ? ` - ${appointmentDate}` : ''}${services ? ` - ${services}` : ''}. Vui lòng chuẩn bị tiếp nhận xe.`,
         type: 'booking',
         priority: 'high',
-        iconType: 'warning',
+        iconType: 'info',
+        actionUrl: '/mechanic-appointments.html',
         relatedId: appointmentId,
         relatedType: 'appointment'
     });
@@ -264,7 +421,6 @@ async function notifyBookingRejected({ userId, appointmentId, reason, status }) 
 
 /**
  * PAYMENT 1: User Upload Payment Proof
- * Gửi cho: USER (confirm) + ADMIN (alert)
  */
 async function notifyPaymentProofUploaded({ userId, customerName, appointmentId, amount }) {
     try {
@@ -339,17 +495,41 @@ async function notifyPaymentRejected({ userId, appointmentId, reason }) {
 /**
  * Appointment Reminder (24h trước)
  */
-async function notifyAppointmentReminder({ userId, appointmentId, appointmentTime }) {
-    return await notifyUser({
-        userId,
-        title: '⏰ Nhắc lịch hẹn',
-        message: `Bạn có lịch hẹn vào ${appointmentTime}. Vui lòng đến đúng giờ!`,
-        type: 'reminder',
-        priority: 'high',
-        iconType: 'warning',
-        relatedId: appointmentId,
-        relatedType: 'appointment'
-    });
+async function notifyAppointmentReminder({ userId, mechanicId, appointmentId, appointmentTime }) {
+    try {
+        // Notification cho USER
+        await notifyUser({
+            userId,
+            title: '⏰ Nhắc lịch hẹn',
+            message: `Bạn có lịch hẹn vào ${appointmentTime}. Vui lòng đến đúng giờ!`,
+            type: 'reminder',
+            priority: 'high',
+            iconType: 'warning',
+            relatedId: appointmentId,
+            relatedType: 'appointment'
+        });
+        
+        // Notification cho MECHANIC (nếu có)
+        if (mechanicId) {
+            await notifyMechanic({
+                mechanicId,
+                title: '⏰ Nhắc lịch làm việc',
+                message: `Bạn có lịch sửa xe vào ${appointmentTime} (Lịch hẹn #${appointmentId}). Vui lòng chuẩn bị sẵn sàng!`,
+                type: 'reminder',
+                priority: 'high',
+                iconType: 'warning',
+                actionUrl: '/mechanic-appointments.html',
+                relatedId: appointmentId,
+                relatedType: 'appointment'
+            });
+        }
+        
+        console.log(`✅ Appointment reminder sent for #${appointmentId}`);
+        
+    } catch (error) {
+        console.error('❌ Error sending reminder:', error);
+        throw error;
+    }
 }
 
 // ================================
@@ -360,13 +540,17 @@ module.exports = {
     createNotification,
     notifyAdmin,
     notifyUser,
+    notifyMechanic,        // NEW! For mechanics
     
-    // Booking workflow (5 steps)
-    notifyBookingCreated,        // Step 1: Đặt lịch
-    notifyBookingConfirmed,      // Step 2: Xác nhận
-    notifyServiceInProgress,     // Step 3: Đang sửa
-    notifyServiceCompleted,      // Step 4: Hoàn thành
-    notifyBookingRejected,       // Step 5: Từ chối/Hủy
+    // Booking workflow (5 steps) - Updated with mechanic support
+    notifyBookingCreated,        // Step 1: Đặt lịch (+ mechanic if assigned)
+    notifyBookingConfirmed,      // Step 2: Xác nhận (+ mechanic)
+    notifyServiceInProgress,     // Step 3: Đang sửa (+ mechanic)
+    notifyServiceCompleted,      // Step 4: Hoàn thành (+ mechanic)
+    notifyBookingRejected,       // Step 5: Từ chối/Hủy (+ mechanic if assigned)
+    
+    // Mechanic specific
+    notifyMechanicAssigned,      // NEW! Admin assigns mechanic
     
     // Payment workflow (3 steps)
     notifyPaymentProofUploaded,  // Payment 1: Upload proof
@@ -374,5 +558,5 @@ module.exports = {
     notifyPaymentRejected,       // Payment 3: Từ chối
     
     // Additional
-    notifyAppointmentReminder    // Reminder
+    notifyAppointmentReminder    // Reminder (+ mechanic)
 };
