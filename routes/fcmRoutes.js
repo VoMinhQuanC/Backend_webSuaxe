@@ -1,26 +1,57 @@
 // File: routes/fcmRoutes.js
 // Routes xử lý FCM tokens và push notifications
+// ✅ Support cả local (file) và Railway (environment variables)
 
 const express = require('express');
 const router = express.Router();
 const { pool } = require('../db');
 const { authenticateToken } = require('./authRoutes');
 
-// Firebase Admin SDK (cần cài đặt: npm install firebase-admin)
+// Firebase Admin SDK
 const admin = require('firebase-admin');
 
-// ✅ TODO: Thay bằng service account key của bạn
-// Tải từ: Firebase Console > Project Settings > Service Accounts > Generate new private key
-const serviceAccount = require('../config/firebase-service-account.json');
+// ========================================
+// ✅ FIREBASE ADMIN INITIALIZATION
+// Support cả local (file) và Railway (env vars)
+// ========================================
 
-// ✅ Initialize Firebase Admin (chỉ cần làm 1 lần)
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-});
+let firebaseInitialized = false;
+
+try {
+    let credential;
+    
+    if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+        // ✅ RAILWAY: Đọc từ environment variable
+        console.log('📱 Initializing Firebase Admin from environment variable...');
+        const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+        credential = admin.credential.cert(serviceAccount);
+        console.log('✅ Firebase Admin credential loaded from env var');
+    } else {
+        // ✅ LOCAL: Đọc từ file
+        console.log('📱 Initializing Firebase Admin from file...');
+        const serviceAccount = require('../config/firebase-service-account.json');
+        credential = admin.credential.cert(serviceAccount);
+        console.log('✅ Firebase Admin credential loaded from file');
+    }
+    
+    // Initialize Firebase Admin
+    admin.initializeApp({
+        credential: credential,
+    });
+    
+    firebaseInitialized = true;
+    console.log('✅ Firebase Admin SDK initialized successfully');
+    
+} catch (err) {
+    console.error('❌ Firebase Admin initialization failed:', err.message);
+    console.warn('⚠️  Push notifications will NOT work');
+    console.warn('   For Railway: Set FIREBASE_SERVICE_ACCOUNT environment variable');
+    console.warn('   For Local: Place firebase-service-account.json in config/ folder');
+}
 
 /**
  * API: Lưu FCM token của user
- * POST /api/notifications/fcm-token
+ * POST /api/fcm/fcm-token (hoặc /api/notifications/fcm-token)
  */
 router.post('/fcm-token', authenticateToken, async (req, res) => {
     try {
@@ -44,7 +75,7 @@ router.post('/fcm-token', authenticateToken, async (req, res) => {
             [userId, fcmToken, fcmToken]
         );
         
-        console.log('✅ FCM token saved');
+        console.log('✅ FCM token saved successfully');
         
         res.json({
             success: true,
@@ -63,6 +94,12 @@ router.post('/fcm-token', authenticateToken, async (req, res) => {
  * Helper: Gửi push notification cho 1 user
  */
 async function sendPushNotification(userId, notification) {
+    // Check Firebase initialized
+    if (!firebaseInitialized) {
+        console.warn('⚠️  Cannot send push notification: Firebase not initialized');
+        return { success: false, message: 'Firebase not initialized' };
+    }
+    
     try {
         // Lấy FCM token của user
         const [tokens] = await pool.query(
@@ -71,7 +108,7 @@ async function sendPushNotification(userId, notification) {
         );
         
         if (tokens.length === 0) {
-            console.log(`⚠️ No FCM token for user ${userId}`);
+            console.log(`⚠️  No FCM token found for user ${userId}`);
             return { success: false, message: 'No FCM token' };
         }
         
@@ -94,11 +131,11 @@ async function sendPushNotification(userId, notification) {
         // Gửi qua Firebase Admin SDK
         const response = await admin.messaging().send(message);
         
-        console.log(`✅ Push notification sent to user ${userId}:`, response);
+        console.log(`✅ Push notification sent to user ${userId}`);
         
         return { success: true, messageId: response };
     } catch (err) {
-        console.error(`❌ Error sending push notification to user ${userId}:`, err);
+        console.error(`❌ Error sending push notification to user ${userId}:`, err.message);
         
         // Nếu token invalid, xóa khỏi DB
         if (err.code === 'messaging/invalid-registration-token' || 
@@ -107,7 +144,7 @@ async function sendPushNotification(userId, notification) {
                 'UPDATE UserFCMTokens SET IsActive = 0 WHERE UserID = ?',
                 [userId]
             );
-            console.log(`🗑️ Removed invalid FCM token for user ${userId}`);
+            console.log(`🗑️  Removed invalid FCM token for user ${userId}`);
         }
         
         return { success: false, error: err.message };
@@ -118,6 +155,11 @@ async function sendPushNotification(userId, notification) {
  * Helper: Gửi push notification cho nhiều users
  */
 async function sendPushNotificationToMultipleUsers(userIds, notification) {
+    if (!firebaseInitialized) {
+        console.warn('⚠️  Cannot send push notifications: Firebase not initialized');
+        return [];
+    }
+    
     const results = [];
     
     for (const userId of userIds) {
@@ -130,7 +172,7 @@ async function sendPushNotificationToMultipleUsers(userIds, notification) {
 
 /**
  * API: Test gửi push notification (chỉ cho admin)
- * POST /api/notifications/test-push
+ * POST /api/fcm/test-push
  */
 router.post('/test-push', authenticateToken, async (req, res) => {
     try {
@@ -142,17 +184,31 @@ router.post('/test-push', authenticateToken, async (req, res) => {
             });
         }
         
+        if (!firebaseInitialized) {
+            return res.status(503).json({
+                success: false,
+                message: 'Firebase Admin not initialized',
+            });
+        }
+        
         const { userId, title, body } = req.body;
+        
+        if (!userId) {
+            return res.status(400).json({
+                success: false,
+                message: 'userId is required',
+            });
+        }
         
         const result = await sendPushNotification(userId, {
             title: title || 'Test Notification',
-            body: body || 'This is a test notification',
+            body: body || 'This is a test notification from VQT Bike',
             type: 'test',
         });
         
         res.json({
             success: result.success,
-            message: result.success ? 'Notification sent' : result.error,
+            message: result.success ? 'Notification sent successfully' : result.error,
             data: result,
         });
     } catch (err) {
@@ -164,7 +220,22 @@ router.post('/test-push', authenticateToken, async (req, res) => {
     }
 });
 
-// Export helpers
+/**
+ * API: Check Firebase status
+ * GET /api/fcm/status
+ */
+router.get('/status', authenticateToken, async (req, res) => {
+    res.json({
+        success: true,
+        firebaseInitialized,
+        message: firebaseInitialized 
+            ? 'Firebase Admin SDK is running' 
+            : 'Firebase Admin SDK not initialized',
+    });
+});
+
+// Export router và helpers
 module.exports = router;
 module.exports.sendPushNotification = sendPushNotification;
 module.exports.sendPushNotificationToMultipleUsers = sendPushNotificationToMultipleUsers;
+module.exports.firebaseInitialized = firebaseInitialized;
