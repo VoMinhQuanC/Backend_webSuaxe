@@ -1,6 +1,6 @@
 // ================================
-// NOTIFICATION HELPER - COMPLETE
-// All Payment + Booking Workflows
+// NOTIFICATION HELPER - COMPLETE WORKFLOW
+// Tất cả các bước: Booking → Confirmed → InProgress → Completed
 // ================================
 
 const mysql = require('mysql2/promise');
@@ -133,85 +133,12 @@ async function notifyUser({
 }
 
 // ================================
-// PAYMENT WORKFLOW NOTIFICATIONS
-// ================================
-
-/**
- * A1. User Upload Payment Proof
- * Gửi cho: USER (confirm) + ADMIN (alert)
- */
-async function notifyPaymentProofUploaded({ userId, customerName, appointmentId, amount }) {
-    try {
-        // Notification cho USER
-        await notifyUser({
-            userId,
-            title: 'Đã gửi chứng từ thanh toán',
-            message: `Chứng từ thanh toán của bạn đang được admin xét duyệt. Vui lòng đợi trong 24h.`,
-            type: 'payment',
-            priority: 'normal',
-            iconType: 'info',
-            relatedId: appointmentId,
-            relatedType: 'appointment'
-        });
-        
-        // Notification cho ADMIN
-        await notifyAdmin({
-            title: 'Chứng từ thanh toán mới',
-            message: `Khách hàng ${customerName} đã upload chứng từ thanh toán ${amount?.toLocaleString('vi-VN')} đ`,
-            type: 'payment',
-            priority: 'normal',
-            iconType: 'info',
-            actionUrl: '/admin-booking.html',
-            relatedId: appointmentId,
-            relatedType: 'appointment'
-        });
-        
-        console.log(`✅ Payment proof upload notifications sent for appointment #${appointmentId}`);
-        
-    } catch (error) {
-        console.error('❌ Error sending payment proof upload notifications:', error);
-        throw error;
-    }
-}
-
-/**
- * A2. Admin Approved Payment
- */
-async function notifyPaymentApproved({ userId, appointmentId, amount }) {
-    return await notifyUser({
-        userId,
-        title: 'Thanh toán đã được xác nhận',
-        message: `Thanh toán ${amount?.toLocaleString('vi-VN')} đ cho lịch hẹn #${appointmentId} đã được xác nhận. Cảm ơn bạn!`,
-        type: 'payment',
-        priority: 'high',
-        iconType: 'success',
-        relatedId: appointmentId,
-        relatedType: 'appointment'
-    });
-}
-
-/**
- * A3. Admin Rejected Payment
- */
-async function notifyPaymentRejected({ userId, appointmentId, reason }) {
-    return await notifyUser({
-        userId,
-        title: 'Thanh toán bị từ chối',
-        message: `Thanh toán cho lịch hẹn #${appointmentId} bị từ chối${reason ? `: ${reason}` : ''}`,
-        type: 'payment',
-        priority: 'high',
-        iconType: 'error',
-        relatedId: appointmentId,
-        relatedType: 'appointment'
-    });
-}
-
-// ================================
 // BOOKING WORKFLOW NOTIFICATIONS
 // ================================
 
 /**
- * B1. User Created Booking
+ * STEP 1: User Created Booking
+ * Status: PendingApproval (ẨN)
  * Gửi cho: USER (confirm) + ADMIN (alert)
  */
 async function notifyBookingCreated({ userId, customerName, appointmentId, appointmentDate, services }) {
@@ -219,8 +146,8 @@ async function notifyBookingCreated({ userId, customerName, appointmentId, appoi
         // Notification cho USER
         await notifyUser({
             userId,
-            title: 'Đã gửi yêu cầu đặt lịch',
-            message: `Yêu cầu đặt lịch #${appointmentId} của bạn đang được admin xem xét. Chúng tôi sẽ phản hồi trong 24h.`,
+            title: '📝 Đặt lịch thành công',
+            message: `Yêu cầu đặt lịch #${appointmentId} của bạn đã được gửi. Chúng tôi sẽ xác nhận trong 24h.`,
             type: 'booking',
             priority: 'normal',
             iconType: 'info',
@@ -230,7 +157,7 @@ async function notifyBookingCreated({ userId, customerName, appointmentId, appoi
         
         // Notification cho ADMIN
         await notifyAdmin({
-            title: 'Đặt lịch mới',
+            title: '🔔 Đặt lịch mới',
             message: `Khách hàng ${customerName} đã đặt lịch sửa xe #${appointmentId}${appointmentDate ? ` - ${appointmentDate}` : ''}${services ? ` - ${services}` : ''}`,
             type: 'booking',
             priority: 'normal',
@@ -249,15 +176,17 @@ async function notifyBookingCreated({ userId, customerName, appointmentId, appoi
 }
 
 /**
- * B2. Admin Approved Booking
+ * STEP 2: Admin Confirmed Booking
+ * Status: PendingApproval → Confirmed (HIỆN)
+ * Gửi cho: USER
  */
-async function notifyBookingApproved({ userId, appointmentId, appointmentDate, garage }) {
+async function notifyBookingConfirmed({ userId, appointmentId, appointmentDate, garage, mechanicName }) {
     return await notifyUser({
         userId,
-        title: 'Lịch hẹn đã được xác nhận',
-        message: `Lịch hẹn #${appointmentId} của bạn đã được xác nhận.${appointmentDate ? ` Thời gian: ${appointmentDate}` : ''}${garage ? ` - Địa điểm: ${garage}` : ''}`,
+        title: '✅ Lịch hẹn đã được xác nhận',
+        message: `Lịch hẹn #${appointmentId} đã được xác nhận!${appointmentDate ? ` 📅 Thời gian: ${appointmentDate}.` : ''}${mechanicName ? ` 👨‍🔧 Kỹ thuật viên: ${mechanicName}.` : ''} Vui lòng đến đúng giờ nhé!`,
         type: 'booking',
-        priority: 'normal',
+        priority: 'high',
         iconType: 'success',
         relatedId: appointmentId,
         relatedType: 'appointment'
@@ -265,16 +194,139 @@ async function notifyBookingApproved({ userId, appointmentId, appointmentDate, g
 }
 
 /**
- * B3. Admin Rejected Booking
+ * STEP 3: Service Started (InProgress)
+ * Status: Confirmed → InProgress
+ * Gửi cho: USER
  */
-async function notifyBookingRejected({ userId, appointmentId, reason }) {
+async function notifyServiceInProgress({ userId, appointmentId, mechanicName }) {
     return await notifyUser({
         userId,
-        title: 'Lịch hẹn bị từ chối',
-        message: `Lịch hẹn #${appointmentId} bị từ chối${reason ? `: ${reason}` : ''}. Vui lòng chọn thời gian khác.`,
+        title: '🔧 Đang sửa xe',
+        message: `Xe của bạn đang được xử lý (Lịch hẹn #${appointmentId}).${mechanicName ? ` Kỹ thuật viên ${mechanicName} đang làm việc.` : ''} Chúng tôi sẽ thông báo khi hoàn thành.`,
+        type: 'booking',
+        priority: 'normal',
+        iconType: 'info',
+        relatedId: appointmentId,
+        relatedType: 'appointment'
+    });
+}
+
+/**
+ * STEP 4: Service Completed
+ * Status: InProgress → Completed
+ * Gửi cho: USER
+ */
+async function notifyServiceCompleted({ userId, appointmentId, totalAmount, paymentMethod }) {
+    const paymentInfo = paymentMethod === 'Chuyển khoản ngân hàng' 
+        ? 'Vui lòng kiểm tra thông tin thanh toán.' 
+        : totalAmount 
+            ? `💰 Tổng tiền: ${totalAmount.toLocaleString('vi-VN')}đ. Vui lòng thanh toán tại quầy.`
+            : 'Vui lòng thanh toán tại quầy.';
+    
+    return await notifyUser({
+        userId,
+        title: '🎉 Dịch vụ hoàn thành',
+        message: `Xe của bạn đã được sửa xong (Lịch hẹn #${appointmentId}). ${paymentInfo} Cảm ơn bạn đã sử dụng dịch vụ!`,
+        type: 'booking',
+        priority: 'high',
+        iconType: 'success',
+        relatedId: appointmentId,
+        relatedType: 'appointment'
+    });
+}
+
+/**
+ * STEP 5: Booking Rejected/Canceled
+ * Status: Any → Rejected/Canceled
+ * Gửi cho: USER
+ */
+async function notifyBookingRejected({ userId, appointmentId, reason, status }) {
+    const titleMap = {
+        'Rejected': '❌ Lịch hẹn bị từ chối',
+        'Canceled': '⚠️ Lịch hẹn đã bị hủy'
+    };
+    
+    return await notifyUser({
+        userId,
+        title: titleMap[status] || '⚠️ Lịch hẹn đã bị hủy',
+        message: `Lịch hẹn #${appointmentId} đã bị ${status === 'Rejected' ? 'từ chối' : 'hủy'}${reason ? `: ${reason}` : ''}. Vui lòng đặt lịch khác hoặc liên hệ chúng tôi để được hỗ trợ.`,
         type: 'booking',
         priority: 'high',
         iconType: 'warning',
+        relatedId: appointmentId,
+        relatedType: 'appointment'
+    });
+}
+
+// ================================
+// PAYMENT WORKFLOW NOTIFICATIONS
+// ================================
+
+/**
+ * PAYMENT 1: User Upload Payment Proof
+ * Gửi cho: USER (confirm) + ADMIN (alert)
+ */
+async function notifyPaymentProofUploaded({ userId, customerName, appointmentId, amount }) {
+    try {
+        // Notification cho USER
+        await notifyUser({
+            userId,
+            title: '📤 Đã gửi chứng từ thanh toán',
+            message: `Chứng từ thanh toán cho lịch hẹn #${appointmentId} đã được gửi. Admin sẽ xét duyệt trong 24h.`,
+            type: 'payment',
+            priority: 'normal',
+            iconType: 'info',
+            relatedId: appointmentId,
+            relatedType: 'appointment'
+        });
+        
+        // Notification cho ADMIN
+        await notifyAdmin({
+            title: '💰 Chứng từ thanh toán mới',
+            message: `Khách hàng ${customerName} đã upload chứng từ thanh toán ${amount?.toLocaleString('vi-VN')}đ (Lịch hẹn #${appointmentId})`,
+            type: 'payment',
+            priority: 'normal',
+            iconType: 'info',
+            actionUrl: '/admin-booking.html',
+            relatedId: appointmentId,
+            relatedType: 'appointment'
+        });
+        
+        console.log(`✅ Payment proof upload notifications sent for appointment #${appointmentId}`);
+        
+    } catch (error) {
+        console.error('❌ Error sending payment proof upload notifications:', error);
+        throw error;
+    }
+}
+
+/**
+ * PAYMENT 2: Admin Approved Payment
+ */
+async function notifyPaymentApproved({ userId, appointmentId, amount }) {
+    return await notifyUser({
+        userId,
+        title: '✅ Thanh toán đã được xác nhận',
+        message: `Thanh toán ${amount?.toLocaleString('vi-VN')}đ cho lịch hẹn #${appointmentId} đã được xác nhận. Cảm ơn bạn!`,
+        type: 'payment',
+        priority: 'high',
+        iconType: 'success',
+        relatedId: appointmentId,
+        relatedType: 'appointment'
+    });
+}
+
+/**
+ * PAYMENT 3: Admin Rejected Payment
+ */
+async function notifyPaymentRejected({ userId, appointmentId, reason }) {
+    return await notifyUser({
+        userId,
+        title: '❌ Thanh toán bị từ chối',
+        message: `Chứng từ thanh toán cho lịch hẹn #${appointmentId} bị từ chối${reason ? `: ${reason}` : ''}. Vui lòng upload lại chứng từ chính xác.`,
+        type: 'payment',
+        priority: 'high',
+        iconType: 'error',
         relatedId: appointmentId,
         relatedType: 'appointment'
     });
@@ -285,29 +337,13 @@ async function notifyBookingRejected({ userId, appointmentId, reason }) {
 // ================================
 
 /**
- * Service Completed
- */
-async function notifyServiceCompleted({ userId, appointmentId }) {
-    return await notifyUser({
-        userId,
-        title: 'Dịch vụ hoàn thành',
-        message: `Xe của bạn đã được sửa xong. Vui lòng đến nhận xe.`,
-        type: 'system',
-        priority: 'high',
-        iconType: 'success',
-        relatedId: appointmentId,
-        relatedType: 'appointment'
-    });
-}
-
-/**
- * Appointment Reminder
+ * Appointment Reminder (24h trước)
  */
 async function notifyAppointmentReminder({ userId, appointmentId, appointmentTime }) {
     return await notifyUser({
         userId,
-        title: 'Nhắc lịch hẹn',
-        message: `Bạn có lịch hẹn vào ${appointmentTime}`,
+        title: '⏰ Nhắc lịch hẹn',
+        message: `Bạn có lịch hẹn vào ${appointmentTime}. Vui lòng đến đúng giờ!`,
         type: 'reminder',
         priority: 'high',
         iconType: 'warning',
@@ -325,17 +361,18 @@ module.exports = {
     notifyAdmin,
     notifyUser,
     
-    // Payment workflow
-    notifyPaymentProofUploaded,
-    notifyPaymentApproved,
-    notifyPaymentRejected,
+    // Booking workflow (5 steps)
+    notifyBookingCreated,        // Step 1: Đặt lịch
+    notifyBookingConfirmed,      // Step 2: Xác nhận
+    notifyServiceInProgress,     // Step 3: Đang sửa
+    notifyServiceCompleted,      // Step 4: Hoàn thành
+    notifyBookingRejected,       // Step 5: Từ chối/Hủy
     
-    // Booking workflow
-    notifyBookingCreated,
-    notifyBookingApproved,
-    notifyBookingRejected,
+    // Payment workflow (3 steps)
+    notifyPaymentProofUploaded,  // Payment 1: Upload proof
+    notifyPaymentApproved,       // Payment 2: Duyệt
+    notifyPaymentRejected,       // Payment 3: Từ chối
     
     // Additional
-    notifyServiceCompleted,
-    notifyAppointmentReminder
+    notifyAppointmentReminder    // Reminder
 };

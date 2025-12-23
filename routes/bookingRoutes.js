@@ -983,6 +983,73 @@ router.put('/appointments/:id', authenticateToken, async (req, res) => {
 
         const appointmentData = updatedAppointments[0];
 
+        // ✅ GỬI NOTIFICATION KHI STATUS THAY ĐỔI
+        if (status && status !== previousStatus) {
+            try {
+                // Query thêm thông tin cần thiết
+                const [mechanicInfo] = await pool.query(
+                    'SELECT FullName FROM Users WHERE UserID = ?',
+                    [appointmentData.MechanicID]
+                );
+                
+                const [totalAmountInfo] = await pool.query(`
+                    SELECT SUM(s.Price * aps.Quantity) as TotalAmount
+                    FROM AppointmentServices aps
+                    JOIN Services s ON aps.ServiceID = s.ServiceID
+                    WHERE aps.AppointmentID = ?
+                `, [appointmentId]);
+                
+                const mechanicName = mechanicInfo.length > 0 ? mechanicInfo[0].FullName : null;
+                const totalAmount = totalAmountInfo[0]?.TotalAmount || 0;
+                
+                // Gửi notification theo status
+                if (status === 'Confirmed') {
+                    // STEP 2: Admin xác nhận booking
+                    await notificationHelper.notifyBookingConfirmed({
+                        userId: appointmentData.UserID,
+                        appointmentId: appointmentId,
+                        appointmentDate: appointmentData.AppointmentDate,
+                        garage: appointmentData.GarageName || null,
+                        mechanicName: mechanicName
+                    });
+                    console.log(`✅ Booking confirmation notification sent for #${appointmentId}`);
+                }
+                else if (status === 'InProgress') {
+                    // STEP 3: Bắt đầu sửa xe
+                    await notificationHelper.notifyServiceInProgress({
+                        userId: appointmentData.UserID,
+                        appointmentId: appointmentId,
+                        mechanicName: mechanicName
+                    });
+                    console.log(`✅ Service in-progress notification sent for #${appointmentId}`);
+                }
+                else if (status === 'Completed') {
+                    // STEP 4: Hoàn thành
+                    await notificationHelper.notifyServiceCompleted({
+                        userId: appointmentData.UserID,
+                        appointmentId: appointmentId,
+                        totalAmount: totalAmount,
+                        paymentMethod: appointmentData.PaymentMethod
+                    });
+                    console.log(`✅ Service completion notification sent for #${appointmentId}`);
+                }
+                else if (status === 'Rejected' || status === 'Canceled') {
+                    // STEP 5: Từ chối / Hủy
+                    await notificationHelper.notifyBookingRejected({
+                        userId: appointmentData.UserID,
+                        appointmentId: appointmentId,
+                        reason: notes || '',
+                        status: status
+                    });
+                    console.log(`✅ Booking rejection notification sent for #${appointmentId}`);
+                }
+                
+            } catch (notifError) {
+                console.error('❌ Error sending status change notification:', notifError);
+                // Không throw - notification fail không nên block update
+            }
+        }
+
         // 🔥 EMIT SOCKET EVENT
         socketService.emitAppointmentUpdated(appointmentData, previousStatus);
 
