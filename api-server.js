@@ -105,6 +105,25 @@ app.use('/api/fcm', fcmRoutes);
 console.log('✅ fcmRoutes loaded successfully');
 console.log('✅ mechanicNotificationHelper loaded successfully');
 
+// ✅ Health check endpoints (PUBLIC - no auth)
+app.get('/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    service: 'SuaXe Backend API'
+  });
+});
+
+app.get('/api/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    service: 'SuaXe Backend API'
+  });
+});
+
 // --- Session & Passport (Auth0 ready) ---
 app.use(session({
   secret: process.env.SESSION_SECRET || 'session_secret_fallback',
