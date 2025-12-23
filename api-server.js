@@ -103,7 +103,7 @@ const checkAdminAccess = (req, res, next) => {
 
 // --- Mount payment routes (sau CORS)
 app.use('/api/payment', paymentRoutes);
-app.use('/api/notifications', notificationRoutes);
+app.use('/api/notifications', authenticateToken, notificationRoutes);
 app.use('/api/fcm', fcmRoutes);
 
 console.log('✅ fcmRoutes loaded successfully');
