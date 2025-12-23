@@ -385,7 +385,8 @@ router.post('/appointments', authenticateToken, async (req, res) => {
                     customerName: customerName,
                     appointmentId: result.appointmentId,
                     appointmentDate: bookingData.appointmentDate || null,
-                    services: serviceNames
+                    services: serviceNames,
+                    mechanicId: bookingData.mechanicId || mechanicId,
                 });
                 
                 console.log(`✅ Booking creation notifications sent for #${result.appointmentId}`);
