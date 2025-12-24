@@ -1517,15 +1517,22 @@ router.put('/schedules/:id/approve', authenticateToken, checkAdminAccess, async 
             let editData = null;
             try {
                 const notesData = JSON.parse(schedule.Notes || '{}');
-                editData = notesData.editRequest;
+                // ✅ FIX: Notes structure mới không có editRequest wrapper
+                // Structure: {type: "edit", newWorkDate: "...", newStartTime: "...", ...}
+                if (notesData.type === 'edit') {
+                    editData = notesData;
+                } else if (notesData.editRequest) {
+                    // Backward compatibility: Old structure
+                    editData = notesData.editRequest;
+                }
             } catch (e) {
                 console.error('Lỗi parse edit request:', e);
             }
             
-            if (editData) {
+            if (editData && editData.newWorkDate && editData.newStartTime && editData.newEndTime) {
                 // Giữ lại Notes với flag approved để frontend nhận diện
                 const approvedNotes = JSON.stringify({
-                    editRequest: editData,
+                    ...editData,
                     approved: true,
                     approvedAt: new Date().toISOString()
                 });
@@ -1561,7 +1568,7 @@ router.put('/schedules/:id/approve', authenticateToken, checkAdminAccess, async 
                 await connection.rollback();
                 return res.status(400).json({
                     success: false,
-                    message: 'Không tìm thấy thông tin xin sửa lịch'
+                    message: 'Không tìm thấy thông tin xin sửa lịch hoặc dữ liệu không đầy đủ'
                 });
             }
         }
@@ -1679,7 +1686,7 @@ router.put('/schedules/:id/reject', authenticateToken, checkAdminAccess, async (
             
             // Giữ lại Notes với flag rejected
             const rejectedNotes = JSON.stringify({
-                editRequest: editData,
+                ...editData,
                 rejected: true,
                 rejectedAt: new Date().toISOString(),
                 rejectedReason: reason || null
