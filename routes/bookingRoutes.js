@@ -57,36 +57,92 @@ router.get('/appointments', authenticateToken, async (req, res) => {
 
 // API: Lấy lịch hẹn theo ID
 router.get('/appointments/:id', authenticateToken, async (req, res) => {
-    try {
-        const appointmentId = req.params.id;
-        const appointment = await Booking.getAppointmentById(appointmentId);
-        
-        if (!appointment) {
-            return res.status(404).json({ 
-                success: false, 
-                message: 'Không tìm thấy lịch hẹn' 
-            });
-        }
-        
-        // Kiểm tra quyền truy cập: chỉ admin hoặc chủ lịch hẹn mới được xem
-        if (req.user.role !== 1 && req.user.userId !== appointment.UserID) {
-            return res.status(403).json({ 
-                success: false, 
-                message: 'Không có quyền truy cập lịch hẹn này' 
-            });
-        }
-        
-        res.json({
-            success: true,
-            appointment
-        });
-    } catch (err) {
-        console.error('Lỗi khi lấy thông tin lịch hẹn:', err);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Lỗi server: ' + err.message 
-        });
+  try {
+    const appointmentId = req.params.id;
+    
+    // Get appointment details
+    const [appointments] = await pool.query(`
+      SELECT 
+        a.*,
+        u.FullName, u.PhoneNumber, u.Email,
+        v.LicensePlate, v.Brand, v.Model, v.Year
+      FROM Appointments a
+      LEFT JOIN Users u ON a.UserID = u.UserID
+      LEFT JOIN Vehicles v ON a.VehicleID = v.VehicleID
+      WHERE a.AppointmentID = ?
+    `, [appointmentId]);
+    
+    if (appointments.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Không tìm thấy lịch hẹn'
+      });
     }
+    
+    const appointment = appointments[0];
+    
+    // ✅ CODE MỚI - THÊM CHECK MECHANIC
+    const isOwner = appointment.UserID === req.user.userId;
+    const isAdmin = req.user.role === 1;
+    const isMechanic = appointment.MechanicID === req.user.userId;  // ← THÊM DÒNG NÀY
+    
+    // ✅ SỬA CHECK PERMISSION
+    if (!isOwner && !isAdmin && !isMechanic) {  // ← THÊM && !isMechanic
+      return res.status(403).json({
+        success: false,
+        message: 'Không có quyền truy cập lịch hẹn này'
+      });
+    }
+    
+    // Get services for this appointment
+    const [services] = await pool.query(`
+      SELECT 
+        s.ServiceID,
+        s.ServiceName,
+        aps.Price,
+        aps.EstimatedTime,
+        aps.Quantity
+      FROM AppointmentServices aps
+      JOIN Services s ON aps.ServiceID = s.ServiceID
+      WHERE aps.AppointmentID = ?
+    `, [appointmentId]);
+    
+    // Format response
+    res.json({
+      success: true,
+      appointment: {
+        appointmentId: appointment.AppointmentID,
+        appointmentDate: appointment.AppointmentDate,
+        status: appointment.Status,
+        notes: appointment.Notes,
+        
+        // Customer info
+        fullName: appointment.FullName,
+        phoneNumber: appointment.PhoneNumber,
+        email: appointment.Email,
+        
+        // Vehicle info
+        licensePlate: appointment.LicensePlate,
+        brand: appointment.Brand,
+        model: appointment.Model,
+        year: appointment.Year,
+        
+        // Services
+        services: JSON.stringify(services),
+        
+        // IDs
+        userId: appointment.UserID,
+        vehicleId: appointment.VehicleID,
+        mechanicId: appointment.MechanicID,
+      }
+    });
+  } catch (error) {
+    console.error('Error getting appointment detail:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi server: ' + error.message
+    });
+  }
 });
 
 // API: Lấy lịch hẹn của người dùng hiện tại
