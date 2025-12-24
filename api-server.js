@@ -239,13 +239,6 @@ try {
   console.error('Stack:', e.stack);
 }
 
-try {
-    const attendanceRoutes = require('./routes/attendanceRoutes');
-    app.use('/api/attendance', attendanceRoutes);
-    console.log('✅ Attendance routes loaded');
-} catch (err) {
-    console.error('❌ Failed to load attendance routes:', err.message);
-}
 
 // ⭐ Admin Payment Proof Routes - Admin duyệt ảnh chứng từ
 try { 
@@ -254,16 +247,6 @@ try {
   console.log('✅ adminPaymentProofRoutes loaded successfully');
 } catch (e) { 
   console.error('❌ adminPaymentProofRoutes ERROR:', e.message); 
-  console.error('Stack:', e.stack);
-}
-
-// 📅 Attendance Routes - Hệ thống chấm công
-try { 
-  const attendanceRoutes = require('./routes/attendanceRoutes'); 
-  app.use('/api/attendance', attendanceRoutes); 
-  console.log('✅ attendanceRoutes loaded successfully');
-} catch (e) { 
-  console.error('❌ attendanceRoutes ERROR:', e.message); 
   console.error('Stack:', e.stack);
 }
 
