@@ -343,6 +343,77 @@ router.get('/today', authenticateToken, async (req, res) => {
     }
 });
 
+/**
+ * ✅ NEW: Lịch sử chấm công
+ * GET /api/attendance/history
+ * GET /api/attendance/history?month=2025-12
+ */
+router.get('/history', authenticateToken, async (req, res) => {
+    try {
+        const mechanicId = req.user.userId;
+        const { month } = req.query;
+        
+        console.log('📅 Getting history for mechanic:', mechanicId);
+        console.log('📅 Month filter:', month);
+        
+        let query = `
+            SELECT 
+                a.AttendanceID,
+                a.MechanicID,
+                a.AttendanceDate,
+                a.CheckInTime,
+                a.CheckOutTime,
+                a.Status,
+                a.ScheduleID,
+                a.ScheduledStartTime,
+                a.ScheduledEndTime,
+                a.ScheduledWorkHours,
+                a.ActualWorkHours,
+                a.OvertimeHours,
+                a.CheckInLatitude,
+                a.CheckInLongitude,
+                a.CheckInAddress,
+                a.CheckOutLatitude,
+                a.CheckOutLongitude,
+                a.CheckOutAddress,
+                a.Notes
+            FROM Attendance a
+            WHERE a.MechanicID = ?
+        `;
+        
+        const params = [mechanicId];
+        
+        // ✅ Filter by month if provided (format: YYYY-MM)
+        if (month) {
+            // Extract year and month from YYYY-MM
+            const [year, monthNum] = month.split('-');
+            query += ` AND YEAR(a.AttendanceDate) = ? AND MONTH(a.AttendanceDate) = ?`;
+            params.push(parseInt(year), parseInt(monthNum));
+        }
+        
+        query += ` ORDER BY a.AttendanceDate DESC`;
+        
+        console.log('📅 Query params:', params);
+        
+        const [attendance] = await pool.query(query, params);
+        
+        console.log(`✅ Found ${attendance.length} records`);
+        
+        res.json({
+            success: true,
+            attendance: attendance,
+            count: attendance.length
+        });
+        
+    } catch (error) {
+        console.error('❌ Error getting attendance history:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi khi lấy lịch sử chấm công: ' + error.message
+        });
+    }
+});
+
 // =============================================
 // ADMIN - XEM CHẤM CÔNG
 // =============================================
