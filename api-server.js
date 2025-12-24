@@ -239,6 +239,14 @@ try {
   console.error('Stack:', e.stack);
 }
 
+try {
+    const attendanceRoutes = require('./routes/attendanceRoutes');
+    app.use('/api/attendance', attendanceRoutes);
+    console.log('✅ Attendance routes loaded');
+} catch (err) {
+    console.error('❌ Failed to load attendance routes:', err.message);
+}
+
 // ⭐ Admin Payment Proof Routes - Admin duyệt ảnh chứng từ
 try { 
   const adminPaymentProofRoutes = require('./routes/adminPaymentProofRoutes'); 
