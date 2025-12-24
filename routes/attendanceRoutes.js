@@ -4,13 +4,67 @@ const router = express.Router();
 const { pool } = require('../db');
 const { authenticateToken } = require('./authRoutes');
 const crypto = require('crypto');
+const QRCode = require('qrcode'); // ✅ THÊM PACKAGE
 
 // =============================================
 // QR CODE GENERATION
 // =============================================
 
 /**
- * Tạo QR code mới (tự động refresh mỗi 30s)
+ * ✅ MỚI: Tạo QR code và trả về ảnh PNG (Base64)
+ * GET /api/attendance/qr/image
+ * Response: {success, token, image (base64), expiresAt, validFor}
+ */
+router.get('/qr/image', async (req, res) => {
+    try {
+        const now = new Date();
+        const timestamp = now.getTime();
+        const randomStr = crypto.randomBytes(16).toString('hex');
+        
+        const token = `${timestamp}_${crypto.createHash('sha256')
+            .update(`${timestamp}_${randomStr}_SECRET`)
+            .digest('hex')
+            .substring(0, 20)}`;
+        
+        const expiresAt = new Date(now.getTime() + 30000); // +30s
+        
+        // Lưu token vào database
+        await pool.query(
+            'INSERT INTO AttendanceQRCodes (QRToken, GeneratedAt, ExpiresAt) VALUES (?, ?, ?)',
+            [token, now, expiresAt]
+        );
+        
+        // Xóa token cũ hết hạn
+        await pool.query('DELETE FROM AttendanceQRCodes WHERE ExpiresAt < NOW()');
+        
+        // Generate QR code image (base64 data URL)
+        const qrImage = await QRCode.toDataURL(token, {
+            width: 300,
+            margin: 2,
+            color: {
+                dark: '#000000',
+                light: '#FFFFFF'
+            }
+        });
+        
+        // Trả về JSON với base64 image
+        res.json({
+            success: true,
+            token: token,
+            image: qrImage, // data:image/png;base64,iVBORw0KGgo...
+            expiresAt: expiresAt.toISOString(),
+            validFor: 30
+        });
+        
+        console.log('✅ QR image generated:', token.substring(0, 20) + '...');
+    } catch (err) {
+        console.error('❌ QR image error:', err);
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+/**
+ * Tạo QR code mới (tự động refresh mỗi 30s) - LEGACY
  * GET /api/attendance/qr/generate
  */
 router.get('/qr/generate', async (req, res) => {
@@ -68,7 +122,7 @@ router.post('/check-in', authenticateToken, async (req, res) => {
         );
         
         if (qrRows.length === 0) {
-            return res.status(400).json({ success: false, message: 'Mã QR không hợp lệ' });
+            return res.status(400).json({ success: false, message: 'Mã QR không hợp lệ hoặc đã hết hạn' });
         }
         
         const today = new Date().toISOString().split('T')[0];
@@ -135,7 +189,7 @@ router.post('/check-out', authenticateToken, async (req, res) => {
         );
         
         if (qrRows.length === 0) {
-            return res.status(400).json({ success: false, message: 'Mã QR không hợp lệ' });
+            return res.status(400).json({ success: false, message: 'Mã QR không hợp lệ hoặc đã hết hạn' });
         }
         
         const today = new Date().toISOString().split('T')[0];
