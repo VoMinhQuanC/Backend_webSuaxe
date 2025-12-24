@@ -278,6 +278,7 @@ router.get('/schedules/team/by-date-range/:startDate/:endDate', authenticateToke
     }
 });
 
+/**
  * GET /api/mechanics/schedules/all
  * Query params: ?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
  */
@@ -348,7 +349,7 @@ router.get('/schedules', authenticateToken, checkMechanicAccess, async (req, res
         const { startDate, endDate } = req.query;
         const mechanicId = req.user.userId; // Lấy từ JWT token
         
-        console.log('📅 Fetching schedules for mechanic:', mechanicId, 'from', startDate, 'to', endDate);
+        console.log('📅 [MY SCHEDULES] Fetching schedules for mechanic:', mechanicId, 'from', startDate, 'to', endDate);
         
         // Validate params
         if (!startDate || !endDate) {
@@ -358,28 +359,46 @@ router.get('/schedules', authenticateToken, checkMechanicAccess, async (req, res
             });
         }
         
-        // Call model method
-        const StaffSchedule = require('../models/StaffSchedule');
-        const schedules = await StaffSchedule.getSchedulesByMechanicAndDateRange(
-            mechanicId,
-            startDate,
-            endDate
-        );
+        // ✅ Query trực tiếp từ database
+        const query = `
+            SELECT 
+                ss.ScheduleID,
+                ss.MechanicID,
+                ss.WorkDate,
+                ss.StartTime,
+                ss.EndTime,
+                ss.Type,
+                ss.IsAvailable,
+                ss.Notes,
+                ss.Status,
+                ss.CreatedAt,
+                ss.UpdatedAt,
+                u.FullName as MechanicName,
+                u.PhoneNumber as MechanicPhone
+            FROM StaffSchedule ss
+            JOIN Users u ON ss.MechanicID = u.UserID
+            WHERE ss.MechanicID = ?
+            AND ss.WorkDate BETWEEN ? AND ?
+            ORDER BY ss.WorkDate ASC, ss.StartTime ASC
+        `;
         
-        console.log('✅ Found schedules:', schedules.length);
+        const [schedules] = await pool.query(query, [mechanicId, startDate, endDate]);
+        
+        console.log('✅ [MY SCHEDULES] Found', schedules.length, 'schedules');
         
         res.json({
             success: true,
             schedules: schedules
         });
     } catch (err) {
-        console.error('Lỗi khi lấy lịch làm việc của kỹ thuật viên:', err);
+        console.error('❌ [MY SCHEDULES] Error:', err);
         res.status(500).json({
             success: false,
             message: 'Lỗi server: ' + err.message
         });
     }
 });
+
 
 /**
  * API: Đếm số KTV đã đăng ký theo ngày
@@ -828,72 +847,6 @@ router.post('/schedules/check-overlap', authenticateToken, checkMechanicAccess, 
     }
 });
 
-router.get('/schedules', authenticateToken, checkMechanicAccess, async (req, res) => {
-    try {
-        const mechanicId = req.user.userId;
-        const { from, to } = req.query;
-        
-        let query = `
-            SELECT 
-                ScheduleID,
-                MechanicID,
-                WorkDate,
-                StartTime,
-                EndTime,
-                Type,
-                Status,
-                Notes,
-                IsAvailable,
-                CreatedAt
-            FROM StaffSchedule 
-            WHERE MechanicID = ?
-        `;
-        const queryParams = [mechanicId];
-        
-        // Lọc theo khoảng thời gian
-        if (from && to) {
-            query += ' AND WorkDate BETWEEN ? AND ?';
-            queryParams.push(from, to);
-        } else if (from) {
-            query += ' AND WorkDate >= ?';
-            queryParams.push(from);
-        } else if (to) {
-            query += ' AND WorkDate <= ?';
-            queryParams.push(to);
-        }
-        
-        query += ' ORDER BY WorkDate DESC, StartTime ASC';
-        
-        const [schedules] = await pool.query(query, queryParams);
-        
-        // Format lại dữ liệu để tương thích với frontend
-        const formattedSchedules = schedules.map(s => ({
-            ScheduleID: s.ScheduleID,
-            MechanicID: s.MechanicID,
-            StartTime: `${s.WorkDate}T${s.StartTime}`, // Combine date + time
-            EndTime: `${s.WorkDate}T${s.EndTime}`,
-            WorkDate: s.WorkDate,
-            StartTimeOnly: s.StartTime,
-            EndTimeOnly: s.EndTime,
-            Type: s.Type || 'available',
-            Status: s.Status || 'Approved',
-            Notes: s.Notes,
-            IsAvailable: s.IsAvailable,
-            CreatedAt: s.CreatedAt
-        }));
-        
-        res.json({
-            success: true,
-            schedules: formattedSchedules
-        });
-    } catch (err) {
-        console.error('Lỗi khi lấy lịch làm việc kỹ thuật viên:', err);
-        res.status(500).json({
-            success: false,
-            message: 'Lỗi server: ' + err.message
-        });
-    }
-});
 
 /**
  * API: Đăng ký lịch làm việc mới
