@@ -279,6 +279,7 @@ router.get('/schedules/team/by-date-range/:startDate/:endDate', authenticateToke
 });
 
 /**
+ * API: Lấy danh sách lịch của TẤT CẢ kỹ thuật viên (để hiển thị trên calendar)
  * GET /api/mechanics/schedules/all
  * Query params: ?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
  */
@@ -2024,58 +2025,6 @@ router.put('/leave-requests/:id/approve', authenticateToken, checkAdminAccess, a
     }
 });
 
-/**
- * API: Lấy lịch của TẤT CẢ mechanics theo date range
- * GET /api/mechanics/schedules/team/by-date-range/:startDate/:endDate
- */
-router.get('/schedules/team/by-date-range/:startDate/:endDate', authenticateToken, async (req, res) => {
-    try {
-        const { startDate, endDate } = req.params;
-        
-        console.log('📅 Loading team schedules:', { startDate, endDate });
-        
-        // ✅ FIX: Đổi từ Mechanic → Users (vì không có bảng Mechanic)
-        const query = `
-            SELECT 
-                s.ScheduleID,
-                s.MechanicID,
-                s.WorkDate,
-                s.StartTime,
-                s.EndTime,
-                s.Type,
-                s.Status,
-                s.IsAvailable,
-                s.Notes,
-                s.CreatedAt,
-                s.UpdatedAt,
-                u.FullName as MechanicName,
-                u.PhoneNumber as MechanicPhone
-            FROM StaffSchedule s
-            INNER JOIN Users u ON s.MechanicID = u.UserID
-            WHERE s.WorkDate BETWEEN ? AND ?
-            AND u.RoleID = 3
-            ORDER BY s.WorkDate ASC, s.StartTime ASC, u.FullName ASC
-        `;
-        
-        const [schedules] = await pool.query(query, [startDate, endDate]);
-        
-        console.log(`✅ Found ${schedules.length} team schedules`);
-        
-        res.json({
-            success: true,
-            schedules: schedules,
-            dateRange: { startDate, endDate },
-            totalSchedules: schedules.length
-        });
-        
-    } catch (err) {
-        console.error('❌ Error loading team schedules:', err);
-        res.status(500).json({
-            success: false,
-            message: 'Lỗi khi tải lịch nhóm: ' + err.message
-        });
-    }
-});
 
 /**
  * API: Đếm số mechanics làm việc mỗi ngày trong tuần
