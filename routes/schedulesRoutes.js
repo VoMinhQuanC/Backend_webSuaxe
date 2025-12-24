@@ -7,6 +7,7 @@ const mysql = require('mysql2/promise');
 const { authenticateToken } = require('./authRoutes');
 
 const { pool } = require('../db');
+const { parseVietnamTime, parseVietnamDate, isValidTimeFormat, isValidDateFormat } = require('../utils/timeUtils');
 
 // Middleware xác thực cho tất cả các routes
 router.use(authenticateToken);
@@ -236,6 +237,22 @@ router.post('/', async (req, res) => {
       });
     }
     
+    // ✅ Parse time về Vietnam timezone (GMT+7)
+    const parsedDate = parseVietnamDate(workDate);
+    const parsedStartTime = parseVietnamTime(startTime);
+    const parsedEndTime = parseVietnamTime(endTime);
+    
+    console.log('📅 [SCHEDULE] Input:', { workDate, startTime, endTime });
+    console.log('✅ [SCHEDULE] Parsed:', { parsedDate, parsedStartTime, parsedEndTime });
+    
+    // Validate parsed values
+    if (!parsedDate || !parsedStartTime || !parsedEndTime) {
+      return res.status(400).json({
+        success: false,
+        message: 'Định dạng ngày hoặc giờ không hợp lệ'
+      });
+    }
+    
     // Kiểm tra xem kỹ thuật viên có tồn tại không
     const [mechanicRows] = await pool.query('SELECT UserID FROM Users WHERE UserID = ? AND RoleID = 3', [mechanicId]);
     
@@ -253,7 +270,7 @@ router.post('/', async (req, res) => {
       ((StartTime <= ? AND EndTime >= ?) OR 
        (StartTime <= ? AND EndTime >= ?) OR
        (StartTime >= ? AND EndTime <= ?))
-    `, [mechanicId, workDate, startTime, startTime, endTime, endTime, startTime, endTime]);
+    `, [mechanicId, parsedDate, parsedStartTime, parsedStartTime, parsedEndTime, parsedEndTime, parsedStartTime, parsedEndTime]);
     
     if (duplicateRows.length > 0) {
       return res.status(400).json({
@@ -262,11 +279,13 @@ router.post('/', async (req, res) => {
       });
     }
     
-    // Thêm lịch làm việc mới
+    // Thêm lịch làm việc mới với parsed time
     const [result] = await pool.query(
       'INSERT INTO StaffSchedule (MechanicID, WorkDate, StartTime, EndTime) VALUES (?, ?, ?, ?)',
-      [mechanicId, workDate, startTime, endTime]
+      [mechanicId, parsedDate, parsedStartTime, parsedEndTime]
     );
+    
+    console.log('✅ [SCHEDULE] Created schedule:', result.insertId);
     
     res.status(201).json({
       success: true,
@@ -274,7 +293,7 @@ router.post('/', async (req, res) => {
       scheduleId: result.insertId
     });
   } catch (error) {
-    console.error('Lỗi khi thêm lịch làm việc:', error);
+    console.error('❌ [SCHEDULE] Error creating schedule:', error);
     res.status(500).json({ 
       success: false, 
       message: 'Lỗi server: ' + error.message 
@@ -293,6 +312,22 @@ router.put('/:id', async (req, res) => {
       return res.status(400).json({
         success: false,
         message: 'Thiếu thông tin bắt buộc'
+      });
+    }
+    
+    // ✅ Parse time về Vietnam timezone (GMT+7)
+    const parsedDate = parseVietnamDate(workDate);
+    const parsedStartTime = parseVietnamTime(startTime);
+    const parsedEndTime = parseVietnamTime(endTime);
+    
+    console.log('📅 [SCHEDULE] Update Input:', { workDate, startTime, endTime });
+    console.log('✅ [SCHEDULE] Parsed:', { parsedDate, parsedStartTime, parsedEndTime });
+    
+    // Validate parsed values
+    if (!parsedDate || !parsedStartTime || !parsedEndTime) {
+      return res.status(400).json({
+        success: false,
+        message: 'Định dạng ngày hoặc giờ không hợp lệ'
       });
     }
     
@@ -324,7 +359,7 @@ router.put('/:id', async (req, res) => {
        (StartTime <= ? AND EndTime >= ?) OR
        (StartTime >= ? AND EndTime <= ?))
       AND ScheduleID <> ?
-    `, [mechanicId, workDate, startTime, startTime, endTime, endTime, startTime, endTime, scheduleId]);
+    `, [mechanicId, parsedDate, parsedStartTime, parsedStartTime, parsedEndTime, parsedEndTime, parsedStartTime, parsedEndTime, scheduleId]);
     
     if (duplicateRows.length > 0) {
       return res.status(400).json({
@@ -333,18 +368,20 @@ router.put('/:id', async (req, res) => {
       });
     }
     
-    // Cập nhật lịch làm việc
+    // Cập nhật lịch làm việc với parsed time
     await pool.query(
       'UPDATE StaffSchedule SET MechanicID = ?, WorkDate = ?, StartTime = ?, EndTime = ? WHERE ScheduleID = ?',
-      [mechanicId, workDate, startTime, endTime, scheduleId]
+      [mechanicId, parsedDate, parsedStartTime, parsedEndTime, scheduleId]
     );
+    
+    console.log('✅ [SCHEDULE] Updated schedule:', scheduleId);
     
     res.json({
       success: true,
       message: 'Cập nhật lịch làm việc thành công'
     });
   } catch (error) {
-    console.error('Lỗi khi cập nhật lịch làm việc:', error);
+    console.error('❌ [SCHEDULE] Error updating schedule:', error);
     res.status(500).json({ 
       success: false, 
       message: 'Lỗi server: ' + error.message 
