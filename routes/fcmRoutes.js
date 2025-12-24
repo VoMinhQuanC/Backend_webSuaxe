@@ -221,6 +221,73 @@ router.post('/test-push', authenticateToken, async (req, res) => {
 });
 
 /**
+ * API: Gửi notification cho 1 user (Admin only)
+ * POST /api/fcm/send-notification
+ */
+router.post('/send-notification', authenticateToken, async (req, res) => {
+    try {
+        // Check admin
+        if (req.user.role !== 1) {
+            return res.status(403).json({
+                success: false,
+                message: 'Chỉ admin mới có quyền gửi notification'
+            });
+        }
+        
+        const { userId, notification } = req.body;
+        
+        // Validation
+        if (!userId || !notification || !notification.title) {
+            return res.status(400).json({
+                success: false,
+                message: 'userId và notification.title là bắt buộc'
+            });
+        }
+        
+        // Lưu notification vào database
+        const [result] = await pool.query(
+            `INSERT INTO Notifications 
+            (UserID, Title, Message, Type, Priority, IconType, IsRead, CreatedAt)
+            VALUES (?, ?, ?, ?, ?, ?, 0, NOW())`,
+            [
+                userId,
+                notification.title,
+                notification.body || notification.message || '',
+                notification.type || 'general',
+                notification.priority || 'normal',
+                notification.iconType || 'info'
+            ]
+        );
+        
+        const notificationId = result.insertId;
+        
+        // Gửi push notification
+        const pushResult = await sendPushNotification(userId, {
+            title: notification.title,
+            body: notification.body || notification.message || '',
+            type: notification.type || 'general',
+            referenceId: notification.referenceId || notificationId,
+            data: notification.data || {}
+        });
+        
+        res.json({
+            success: true,
+            message: 'Notification sent successfully',
+            notificationId: notificationId,
+            pushSent: pushResult.success
+        });
+        
+    } catch (err) {
+        console.error('❌ Error sending notification:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server: ' + err.message
+        });
+    }
+});
+
+
+/**
  * API: Check Firebase status
  * GET /api/fcm/status
  */
