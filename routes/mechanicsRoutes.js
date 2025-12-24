@@ -278,7 +278,7 @@ router.get('/schedules/team/by-date-range/:startDate/:endDate', authenticateToke
     }
 });
 
- * GET /api/mechanics/schedules/all
+/**
  * Query params: ?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
  */
 router.get('/schedules/all', authenticateToken, checkMechanicAccess, async (req, res) => {
