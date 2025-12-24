@@ -1896,57 +1896,6 @@ router.get('/leave-requests', authenticateToken, checkAdminAccess, async (req, r
     }
 });
 
-// ========== BONUS ROUTES: ADMIN QUẢN LÝ ĐơN XIN NGHỈ ==========
-
-/**
- * API: Admin xem danh sách đơn xin nghỉ
- * GET /api/mechanics/leave-requests
- */
-router.get('/leave-requests', authenticateToken, checkAdminAccess, async (req, res) => {
-    try {
-        const { status } = req.query; // pending, approved, rejected
-        
-        let query = `
-            SELECT 
-                ss.ScheduleID,
-                ss.WorkDate,
-                ss.Notes,
-                ss.Status,
-                ss.CreatedAt,
-                u.UserID as MechanicID,
-                u.FullName as MechanicName,
-                u.Phone as MechanicPhone,
-                u.Email as MechanicEmail
-            FROM StaffSchedule ss
-            JOIN Users u ON ss.MechanicID = u.UserID
-            WHERE ss.Type = 'unavailable' AND ss.IsAvailable = 0
-        `;
-        
-        const params = [];
-        
-        if (status) {
-            query += ' AND ss.Status = ?';
-            params.push(status);
-        }
-        
-        query += ' ORDER BY ss.CreatedAt DESC';
-        
-        const [leaveRequests] = await pool.query(query, params);
-        
-        res.json({ 
-            success: true, 
-            data: leaveRequests,
-            total: leaveRequests.length
-        });
-        
-    } catch (error) {
-        console.error('Lỗi khi lấy danh sách đơn xin nghỉ:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Lỗi server: ' + error.message 
-        });
-    }
-});
 
 /**
  * API: Admin duyệt/từ chối đơn xin nghỉ
