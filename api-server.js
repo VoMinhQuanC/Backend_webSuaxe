@@ -17,6 +17,7 @@ const paymentRoutes = require('./routes/paymentRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const fcmRoutes = require('./routes/fcmRoutes');
 const mechanicNotificationHelper = require('./routes/mechanicNotificationHelper');
+const attendanceRoutes = require('./routes/attendanceRoutes');
 const app = express();
 
 // --- Config GCS (Optional - không bắt buộc) ---
@@ -105,6 +106,7 @@ const checkAdminAccess = (req, res, next) => {
 app.use('/api/payment', paymentRoutes);
 app.use('/api/notifications', authenticateToken, notificationRoutes);
 app.use('/api/fcm', fcmRoutes);
+app.use('/api/attendance', attendanceRoutes);
 
 console.log('✅ fcmRoutes loaded successfully');
 console.log('✅ mechanicNotificationHelper loaded successfully');
