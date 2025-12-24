@@ -247,6 +247,16 @@ try {
   console.error('Stack:', e.stack);
 }
 
+// 📅 Attendance Routes - Hệ thống chấm công
+try { 
+  const attendanceRoutes = require('./routes/attendanceRoutes'); 
+  app.use('/api/attendance', attendanceRoutes); 
+  console.log('✅ attendanceRoutes loaded successfully');
+} catch (e) { 
+  console.error('❌ attendanceRoutes ERROR:', e.message); 
+  console.error('Stack:', e.stack);
+}
+
 // ================= ✅ VEHICLE API - INLINE (không cần file riêng) =================
 console.log('🚗 Loading inline Vehicle API...');
 
