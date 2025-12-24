@@ -218,6 +218,66 @@ router.put('/notifications/:id/read', authenticateToken, checkMechanicAccess, as
  * ĐÃ SỬA: Dùng StaffSchedule thay vì MechanicSchedules
  * 
  * API: Lấy danh sách lịch của TẤT CẢ kỹ thuật viên (để hiển thị trên calendar)
+
+/**
+ * API: Lấy lịch nhóm (tất cả mechanics) theo date range - URL params  
+ * GET /api/mechanics/schedules/team/by-date-range/:startDate/:endDate
+ * Dùng cho app Flutter - Trả về lịch TẤT CẢ mechanics
+ */
+router.get('/schedules/team/by-date-range/:startDate/:endDate', authenticateToken, checkMechanicAccess, async (req, res) => {
+    try {
+        const { startDate, endDate } = req.params;
+        
+        console.log('📅 [TEAM SCHEDULE] Loading team schedules:', startDate, '→', endDate);
+        
+        // Kiểm tra params
+        if (!startDate || !endDate) {
+            return res.status(400).json({
+                success: false,
+                message: 'Thiếu startDate hoặc endDate'
+            });
+        }
+        
+        // Query lấy lịch TẤT CẢ mechanics trong khoảng thời gian
+        // Bao gồm cả lịch làm việc và lịch nghỉ để hiển thị đầy đủ
+        const query = `
+            SELECT 
+                ss.ScheduleID,
+                ss.MechanicID,
+                ss.WorkDate,
+                ss.StartTime,
+                ss.EndTime,
+                ss.Type,
+                ss.IsAvailable,
+                ss.Notes,
+                ss.Status,
+                ss.CreatedAt,
+                ss.UpdatedAt,
+                u.FullName as MechanicName,
+                u.PhoneNumber as MechanicPhone
+            FROM StaffSchedule ss
+            JOIN Users u ON ss.MechanicID = u.UserID
+            WHERE ss.WorkDate BETWEEN ? AND ?
+            ORDER BY ss.WorkDate ASC, ss.StartTime ASC
+        `;
+        
+        const [schedules] = await pool.query(query, [startDate, endDate]);
+        
+        console.log('✅ [TEAM SCHEDULE] Found', schedules.length, 'schedules');
+        
+        res.json({
+            success: true,
+            schedules: schedules
+        });
+    } catch (err) {
+        console.error('❌ [TEAM SCHEDULE] Error:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server: ' + err.message
+        });
+    }
+});
+
  * GET /api/mechanics/schedules/all
  * Query params: ?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
  */
