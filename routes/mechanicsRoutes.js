@@ -7,6 +7,7 @@ const router = express.Router();
 const { pool } = require('../db');
 const { authenticateToken } = require('./authRoutes');
 const nodemailer = require('nodemailer');
+const { parseVietnamTime, parseVietnamDate } = require('../utils/timeUtils');
 
 // Middleware kiểm tra quyền kỹ thuật viên
 const checkMechanicAccess = (req, res, next) => {
@@ -808,17 +809,70 @@ router.post('/schedules', authenticateToken, checkMechanicAccess, async (req, re
     try {
         await connection.beginTransaction();
         
-        const { startTime, endTime, validationStartTime, validationEndTime, type, notes, WorkDate, StartTime, EndTime, Type, IsAvailable } = req.body;
+        // ✅ Parse request body - Hỗ trợ cả format cũ và mới
+        const { 
+            // Format mới (uppercase) - Frontend đã fix
+            WorkDate, StartTime, EndTime, Type, IsAvailable, Notes,
+            // Format cũ (lowercase + ISO) - Để tương thích ngược
+            startTime, endTime, validationStartTime, validationEndTime, type, notes
+        } = req.body;
+        
         const mechanicId = req.user.userId;
         
-        // Parse dữ liệu
-        const isUnavailable = type === 'unavailable' || Type === 'unavailable' || IsAvailable === 0;
+        // Parse dữ liệu với Vietnam timezone
+        let workDate, startTimeOnly, endTimeOnly, isUnavailable, scheduleNotes;
         
-        // ===== THÊM VALIDATION 1: Thời gian tối thiểu 4 tiếng =====
-        if (!isUnavailable && validationStartTime && validationEndTime) {
-            const startDateTime = new Date(validationStartTime);
-            const endDateTime = new Date(validationEndTime);
-            const hoursDiff = (endDateTime - startDateTime) / (1000 * 60 * 60);
+        // Ưu tiên format mới (uppercase)
+        if (WorkDate && StartTime && EndTime) {
+            // ✅ Format mới - gửi trực tiếp "YYYY-MM-DD" và "HH:MM"
+            workDate = parseVietnamDate(WorkDate);
+            startTimeOnly = parseVietnamTime(StartTime);
+            endTimeOnly = parseVietnamTime(EndTime);
+            isUnavailable = Type === 'unavailable' || IsAvailable === 0;
+            scheduleNotes = Notes || '';
+            
+            console.log('📅 [MECHANIC] New format - Input:', { WorkDate, StartTime, EndTime });
+            console.log('✅ [MECHANIC] Parsed:', { workDate, startTimeOnly, endTimeOnly });
+        } 
+        // Fallback: Format cũ (ISO string)
+        else if (startTime && endTime) {
+            // ⚠️ Format cũ - Parse từ ISO string
+            const startDate = new Date(startTime);
+            const endDate = new Date(endTime);
+            
+            workDate = startDate.toISOString().split('T')[0];
+            startTimeOnly = startDate.toTimeString().split(' ')[0].substring(0, 8);
+            endTimeOnly = endDate.toTimeString().split(' ')[0].substring(0, 8);
+            isUnavailable = type === 'unavailable';
+            scheduleNotes = notes || '';
+            
+            console.log('⚠️ [MECHANIC] Old format - ISO strings:', { startTime, endTime });
+            console.log('📅 [MECHANIC] Extracted:', { workDate, startTimeOnly, endTimeOnly });
+        } else {
+            await connection.rollback();
+            return res.status(400).json({
+                success: false,
+                message: 'Vui lòng cung cấp đầy đủ thời gian bắt đầu và kết thúc'
+            });
+        }
+        
+        // Validate parsed values
+        if (!workDate || !startTimeOnly || !endTimeOnly) {
+            await connection.rollback();
+            return res.status(400).json({
+                success: false,
+                message: 'Định dạng ngày hoặc giờ không hợp lệ'
+            });
+        }
+        
+        // ===== VALIDATION 1: Thời gian tối thiểu 4 tiếng =====
+        if (!isUnavailable) {
+            // Parse time để tính duration
+            const [startH, startM] = startTimeOnly.split(':').map(Number);
+            const [endH, endM] = endTimeOnly.split(':').map(Number);
+            const startMinutes = startH * 60 + startM;
+            const endMinutes = endH * 60 + endM;
+            const hoursDiff = (endMinutes - startMinutes) / 60;
             
             if (hoursDiff < 4) {
                 await connection.rollback();
@@ -829,9 +883,8 @@ router.post('/schedules', authenticateToken, checkMechanicAccess, async (req, re
             }
         }
         
-        // ===== THÊM VALIDATION 2: Số lượng KTV (max 6) =====
-        const workDate = WorkDate || (startTime ? new Date(startTime).toISOString().split('T')[0] : null);
-        if (workDate && !isUnavailable) {
+        // ===== VALIDATION 2: Số lượng KTV (max 6) =====
+        if (!isUnavailable) {
             const [countResult] = await connection.query(
                 `SELECT COUNT(DISTINCT MechanicID) as mechanicCount
                  FROM StaffSchedule
@@ -850,9 +903,10 @@ router.post('/schedules', authenticateToken, checkMechanicAccess, async (req, re
             }
         }
         
-        // ===== THÊM VALIDATION 3: Overlap 4 tiếng =====
-        if (!isUnavailable && startTime && endTime && workDate) {
-            const requestStart = new Date(startTime);
+        // ===== VALIDATION 3: Overlap 4 tiếng =====
+        if (!isUnavailable) {
+            // Parse time để tạo datetime cho so sánh
+            const requestStart = new Date(`${workDate}T${startTimeOnly}`);
             const fourHoursBefore = new Date(requestStart.getTime() - 4 * 60 * 60 * 1000);
             const fourHoursAfter = new Date(requestStart.getTime() + 4 * 60 * 60 * 1000);
             
@@ -871,46 +925,24 @@ router.post('/schedules', authenticateToken, checkMechanicAccess, async (req, re
                 [
                     mechanicId,
                     workDate,
-                    fourHoursAfter.toISOString(),
-                    fourHoursBefore.toISOString(),
-                    fourHoursBefore.toISOString(),
-                    fourHoursAfter.toISOString()
+                    fourHoursAfter.toTimeString().split(' ')[0],
+                    fourHoursBefore.toTimeString().split(' ')[0],
+                    fourHoursBefore.toTimeString().split(' ')[0],
+                    fourHoursAfter.toTimeString().split(' ')[0]
                 ]
             );
             
             if (overlaps.length > 0) {
                 await connection.rollback();
-                const existingTime = new Date(overlaps[0].StartTime).toLocaleTimeString('vi-VN', {
-                    hour: '2-digit',
-                    minute: '2-digit'
-                });
                 return res.status(400).json({
                     success: false,
-                    message: `Bạn đã có lịch lúc ${existingTime}. Phải cách nhau tối thiểu 4 tiếng.`
+                    message: `Bạn đã có lịch lúc ${overlaps[0].StartTime.substring(0, 5)}. Phải cách nhau tối thiểu 4 tiếng.`
                 });
             }
         }
-        // ===== KẾT THÚC VALIDATION MỚI =====
-        
-        // Kiểm tra dữ liệu đầu vào (code gốc)
-        if (!startTime || !endTime) {
-            await connection.rollback();
-            return res.status(400).json({
-                success: false,
-                message: 'Vui lòng cung cấp đầy đủ thời gian bắt đầu và kết thúc'
-            });
-        }
-        
-        // Parse datetime để lấy WorkDate, StartTime, EndTime
-        const startDate = new Date(startTime);
-        const endDate = new Date(endTime);
-        
-        const scheduleWorkDate = startDate.toISOString().split('T')[0];
-        const startTimeOnly = startDate.toTimeString().split(' ')[0];
-        const endTimeOnly = endDate.toTimeString().split(' ')[0];
         
         // Kiểm tra thời gian hợp lệ
-        if (startDate >= endDate) {
+        if (startTimeOnly >= endTimeOnly) {
             await connection.rollback();
             return res.status(400).json({
                 success: false,
@@ -918,74 +950,51 @@ router.post('/schedules', authenticateToken, checkMechanicAccess, async (req, re
             });
         }
         
-        // Kiểm tra trùng lịch (code gốc - giữ lại để double check)
-        const [overlappingSchedules] = await connection.query(
-            `SELECT * FROM StaffSchedule 
-             WHERE MechanicID = ? AND WorkDate = ?
-             AND ((StartTime <= ? AND EndTime > ?) OR (StartTime < ? AND EndTime >= ?) OR (StartTime >= ? AND EndTime <= ?))`,
-            [mechanicId, scheduleWorkDate, startTimeOnly, startTimeOnly, endTimeOnly, endTimeOnly, startTimeOnly, endTimeOnly]
+        // Kiểm tra xem đã có lịch vào ngày này chưa
+        const [existing] = await connection.query(
+            'SELECT ScheduleID FROM StaffSchedule WHERE MechanicID = ? AND WorkDate = ?',
+            [mechanicId, workDate]
         );
         
-        if (overlappingSchedules.length > 0) {
+        if (existing.length > 0) {
             await connection.rollback();
             return res.status(400).json({
                 success: false,
-                message: 'Thời gian bị trùng với lịch làm việc khác',
-                conflictingSchedules: overlappingSchedules
+                message: 'Bạn đã có lịch làm việc vào ngày này'
             });
         }
         
-        // Thêm lịch làm việc mới vào StaffSchedule
+        // Thêm lịch mới với parsed time (Vietnam timezone)
         const [result] = await connection.query(
-            `INSERT INTO StaffSchedule (MechanicID, WorkDate, StartTime, EndTime, Type, Status, Notes, IsAvailable) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [mechanicId, scheduleWorkDate, startTimeOnly, endTimeOnly, type || 'available', 'Approved', notes || null, 1]        );
-        
-        const scheduleId = result.insertId;
-        
-        // Thông báo cho admin
-        const [adminUsers] = await connection.query(
-            'SELECT UserID FROM Users WHERE RoleID = 1'
+            `INSERT INTO StaffSchedule (MechanicID, WorkDate, StartTime, EndTime, Type, IsAvailable, Notes, Status)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending')`,
+            [
+                mechanicId,
+                workDate,
+                startTimeOnly,
+                endTimeOnly,
+                isUnavailable ? 'unavailable' : 'available',
+                isUnavailable ? 0 : 1,
+                scheduleNotes
+            ]
         );
         
-        for (const admin of adminUsers) {
-            await connection.query(
-                'INSERT INTO Notifications (UserID, Title, Message, Type, ReferenceID) VALUES (?, ?, ?, ?, ?)',
-                [
-                    admin.UserID,
-                    'Lịch làm việc mới cần phê duyệt',
-                    `Kỹ thuật viên ID ${mechanicId} đã đăng ký lịch làm việc mới vào ngày ${scheduleWorkDate}`,
-                    'schedule',
-                    scheduleId
-                ]
-            );
-        }
-        
         await connection.commit();
-
-        // ✅ Lấy thông tin đầy đủ schedule
-        const [scheduleData] = await connection.query(`
-            SELECT s.*, u.FullName as MechanicName, u.Email, u.PhoneNumber
-            FROM StaffSchedule s
-            JOIN Users u ON s.MechanicID = u.UserID
-            WHERE s.ScheduleID = ?
-        `, [scheduleId]);
-
-        // 🔥 EMIT SOCKET EVENT
-        const socketService = require('../socket-service');
-        socketService.emitScheduleCreated(scheduleData[0]);
-
+        
+        console.log('✅ [MECHANIC] Created schedule:', result.insertId);
+        
         res.status(201).json({
             success: true,
-            message: 'Đăng ký lịch làm việc thành công, đang chờ phê duyệt',
-            scheduleId
+            message: 'Đăng ký lịch làm việc thành công',
+            scheduleId: result.insertId
         });
-    } catch (err) {
+        
+    } catch (error) {
         await connection.rollback();
-        console.error('Lỗi khi đăng ký lịch làm việc:', err);
+        console.error('❌ [MECHANIC] Error creating schedule:', error);
         res.status(500).json({
             success: false,
-            message: 'Lỗi server: ' + err.message
+            message: 'Lỗi khi tạo lịch làm việc: ' + error.message
         });
     } finally {
         connection.release();
