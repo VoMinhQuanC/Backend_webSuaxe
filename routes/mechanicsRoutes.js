@@ -820,7 +820,8 @@ router.post('/schedules', authenticateToken, checkMechanicAccess, async (req, re
         const mechanicId = req.user.userId;
         
         // Parse dữ liệu với Vietnam timezone
-        let workDate, startTimeOnly, endTimeOnly, isUnavailable, scheduleNotes;
+        let workDate, startTimeOnly, endTimeOnly, isUnavailable;
+        let scheduleNotes = "";  // Default empty string
         
         // Ưu tiên format mới (uppercase)
         if (WorkDate && StartTime && EndTime) {
@@ -975,7 +976,7 @@ router.post('/schedules', authenticateToken, checkMechanicAccess, async (req, re
                 endTimeOnly,
                 isUnavailable ? 'unavailable' : 'available',
                 isUnavailable ? 0 : 1,
-                scheduleNotes
+                scheduleNotes || ""
             ]
         );
         
