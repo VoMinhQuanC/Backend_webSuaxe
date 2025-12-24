@@ -290,8 +290,9 @@ router.get('/history', authenticateToken, async (req, res) => {
 // =============================================
 
 /**
- * Danh sách hôm nay
+ * ✅ UPDATED: Danh sách chấm công theo ngày (hỗ trợ filter)
  * GET /api/attendance/admin/today
+ * GET /api/attendance/admin/today?date=2025-12-20
  */
 router.get('/admin/today', authenticateToken, async (req, res) => {
     try {
@@ -299,17 +300,25 @@ router.get('/admin/today', authenticateToken, async (req, res) => {
             return res.status(403).json({ success: false, message: 'Chỉ admin' });
         }
         
-        const today = new Date().toISOString().split('T')[0];
+        // ✅ Lấy ngày từ query param hoặc dùng ngày hiện tại
+        const date = req.query.date || new Date().toISOString().split('T')[0];
         
         const [rows] = await pool.query(
             `SELECT a.*, u.FullName, u.PhoneNumber FROM Attendance a
              JOIN Users u ON a.MechanicID = u.UserID
              WHERE a.AttendanceDate = ? ORDER BY a.CheckInTime ASC`,
-            [today]
+            [date]
         );
         
-        res.json({ success: true, attendance: rows });
+        console.log(`✅ Admin view attendance for date: ${date}, found ${rows.length} records`);
+        
+        res.json({ 
+            success: true, 
+            attendance: rows,
+            date: date  // ✅ Trả về ngày đang xem
+        });
     } catch (err) {
+        console.error('❌ Admin today error:', err);
         res.status(500).json({ success: false, message: err.message });
     }
 });
