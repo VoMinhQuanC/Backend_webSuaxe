@@ -69,7 +69,7 @@ router.post('/fcm-token', authenticateToken, async (req, res) => {
         
         // Lưu hoặc update FCM token
         await pool.query(
-            `INSERT INTO UserFCMTokens (UserID, FCMToken, UpdatedAt) 
+            `INSERT INTO FCMTokens (UserID, FCMToken, UpdatedAt) 
              VALUES (?, ?, NOW()) 
              ON DUPLICATE KEY UPDATE FCMToken = ?, UpdatedAt = NOW()`,
             [userId, fcmToken, fcmToken]
@@ -103,7 +103,7 @@ async function sendPushNotification(userId, notification) {
     try {
         // Lấy FCM token của user
         const [tokens] = await pool.query(
-            'SELECT FCMToken FROM UserFCMTokens WHERE UserID = ? AND IsActive = 1',
+            'SELECT FCMToken FROM FCMTokens WHERE UserID = ? AND IsActive = 1',
             [userId]
         );
         
@@ -141,7 +141,7 @@ async function sendPushNotification(userId, notification) {
         if (err.code === 'messaging/invalid-registration-token' || 
             err.code === 'messaging/registration-token-not-registered') {
             await pool.query(
-                'UPDATE UserFCMTokens SET IsActive = 0 WHERE UserID = ?',
+                'UPDATE FCMTokens SET IsActive = 0 WHERE UserID = ?',
                 [userId]
             );
             console.log(`🗑️  Removed invalid FCM token for user ${userId}`);
